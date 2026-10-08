@@ -1,0 +1,2702 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Команда проекта — дашборд, 2FA, история, уведомления</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg: #08110d;
+            --panel: #102018;
+            --panel2: #152a20;
+            --line: #284638;
+            --text: #eef8f2;
+            --muted: #9db3a7;
+            --accent: #39c982;
+            --accent2: #2e9dff;
+            --danger: #e45c6d;
+            --gold: #e5c35c;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Inter, Segoe UI, Arial, sans-serif;
+            background: radial-gradient(circle at 15% 0, #173b29, transparent 35%),
+                        radial-gradient(circle at 90% 20%, #122c3c, transparent 32%),
+                        var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            transition: background 0.3s, color 0.3s;
+        }
+        button, input, select, textarea { font: inherit; }
+        button { cursor: pointer; }
+        .hidden { display: none !important; }
+        .auth {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 25px;
+        }
+        .auth-card {
+            width: min(440px, 100%);
+            background: rgba(16, 32, 24, .96);
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            padding: 30px;
+            box-shadow: 0 30px 100px #0008;
+        }
+        .logo {
+            width: 52px;
+            height: 52px;
+            border-radius: 15px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            display: grid;
+            place-items: center;
+            font-weight: 900;
+            font-size: 22px;
+            margin-bottom: 20px;
+        }
+        h1 { margin: 0 0 8px; font-size: 30px; }
+        h2 { margin: 0 0 14px; }
+        .muted { color: var(--muted); }
+        .tabs {
+            display: flex;
+            background: #0a1710;
+            border-radius: 12px;
+            padding: 4px;
+            margin: 22px 0 18px;
+        }
+        .tabs button {
+            flex: 1;
+            border: 0;
+            background: none;
+            color: var(--muted);
+            padding: 10px;
+            border-radius: 9px;
+        }
+        .tabs button.active {
+            background: var(--panel2);
+            color: var(--text);
+        }
+        .field {
+            margin: 12px 0;
+        }
+        .field label {
+            display: block;
+            font-size: 13px;
+            color: #b7c9be;
+            margin-bottom: 6px;
+        }
+        input, select, textarea {
+            width: 100%;
+            background: #09150f;
+            color: var(--text);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 11px;
+            outline: 0;
+        }
+        input:focus, select:focus, textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px #39c98220;
+        }
+        .primary {
+            width: 100%;
+            border: 0;
+            border-radius: 11px;
+            padding: 12px;
+            color: #06100a;
+            font-weight: 850;
+            background: linear-gradient(135deg, var(--accent), #63e2a2);
+            margin-top: 8px;
+        }
+        .error { color: #ff9da9; font-size: 13px; margin-top: 10px; }
+        .note { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 15px; }
+        .app { min-height: 100vh; }
+        .top {
+            height: 72px;
+            border-bottom: 1px solid var(--line);
+            background: #0c1812dd;
+            backdrop-filter: blur(14px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 4%;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .brand { font-weight: 850; }
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .userbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: #1e4030;
+            font-weight: 800;
+        }
+        .logout {
+            background: #20151a;
+            color: #ffabb6;
+            border: 1px solid #58303a;
+            border-radius: 9px;
+            padding: 9px 12px;
+        }
+        .global-search {
+            flex: 1;
+            min-width: 150px;
+            max-width: 300px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--line);
+            background: #09150f;
+            color: var(--text);
+        }
+        .container {
+            width: min(1450px, 94%);
+            margin: auto;
+            padding: 28px 0 50px;
+        }
+        .head {
+            display: flex;
+            justify-content: space-between;
+            gap: 18px;
+            align-items: flex-start;
+            margin-bottom: 22px;
+        }
+        .eyebrow {
+            font-size: 11px;
+            letter-spacing: .16em;
+            text-transform: uppercase;
+            color: #6ee3a4;
+            font-weight: 850;
+        }
+        .head h1 { font-size: 42px; margin: 5px 0; }
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            border: 1px solid var(--line);
+            background: var(--panel2);
+            color: var(--text);
+            padding: 10px 13px;
+            border-radius: 10px;
+            font-weight: 750;
+        }
+        .btn.primary2 {
+            background: linear-gradient(135deg, var(--accent), #55d8a0);
+            color: #06100a;
+            border: 0;
+        }
+        .btn.danger {
+            background: #2a161c;
+            color: #ffabb6;
+            border-color: #5a3039;
+        }
+        .btn.small { font-size: 12px; padding: 6px 10px; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .stat {
+            background: #0f1e16;
+            border: 1px solid var(--line);
+            border-radius: 15px;
+            padding: 15px;
+        }
+        .stat b { font-size: 25px; display: block; }
+        .stat span { font-size: 12px; color: var(--muted); }
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+            margin: 16px 0;
+        }
+        .analytics-card {
+            background: #0f1e16;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 14px;
+        }
+        .analytics-card b { font-size: 22px; display: block; }
+        .analytics-card span { font-size: 12px; color: var(--muted); }
+        .charts-compact {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .chart-box {
+            background: #0d1a13e8;
+            border: 1px solid var(--line);
+            border-radius: 19px;
+            padding: 15px;
+        }
+        .chart-box h3 {
+            font-size: 14px;
+            margin: 0 0 8px;
+            color: var(--muted);
+            font-weight: 400;
+        }
+        .chart-box canvas {
+            height: 150px !important;
+            width: 100% !important;
+        }
+        .card {
+            background: #0d1a13e8;
+            border: 1px solid var(--line);
+            border-radius: 19px;
+            overflow: hidden;
+        }
+        .toolbar {
+            padding: 15px;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toolbar-row {
+            display: flex;
+            gap: 9px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .search {
+            flex: 1;
+            min-width: 220px;
+        }
+        .filter-group {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .filter-group input, .filter-group select {
+            width: auto;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        .filter-group label {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .table-wrap { overflow: auto; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 980px;
+        }
+        th {
+            background: #13251b;
+            color: #9fb5a8;
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .07em;
+            padding: 13px;
+        }
+        td {
+            border-top: 1px solid #20382b;
+            padding: 11px 13px;
+            vertical-align: middle;
+        }
+        tr:hover td { background: #ffffff05; }
+        .role { font-weight: 700; }
+        .role.ga { color: var(--gold); }
+        .role.admin { color: #ff7e87; }
+        .role.mod { color: #73b7ff; }
+        .role.dev { color: #c890ff; }
+        .empty { text-align: center; color: var(--muted); padding: 45px !important; }
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: #0009;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            z-index: 20;
+        }
+        .modal-card {
+            width: min(720px, 100%);
+            max-height: 90vh;
+            overflow: auto;
+            background: #102018;
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            padding: 24px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 18px;
+        }
+        .profile {
+            display: grid;
+            grid-template-columns: 100px 1fr;
+            gap: 20px;
+        }
+        .big-avatar {
+            width: 100px;
+            height: 100px;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #214a35, #173346);
+            display: grid;
+            place-items: center;
+            font-size: 38px;
+            font-weight: 900;
+        }
+        .profile-name { font-size: 28px; font-weight: 850; }
+        .badge {
+            display: inline-block;
+            padding: 5px 9px;
+            border-radius: 999px;
+            background: #193726;
+            color: #83e6ad;
+            font-size: 12px;
+            font-weight: 750;
+            margin-top: 5px;
+        }
+        .badge-gold { background: #3d3420; color: #e5c35c; }
+        .badge-blue { background: #1a2a3d; color: #73b7ff; }
+        .badge-frozen { background: #4a1a1a; color: #ff8a8a; }
+        .badge-vacation { background: #3d3d1a; color: #e5e35c; }
+        .badge-active { background: #1a3d2a; color: #83e6ad; }
+        .info {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .info div {
+            background: #0b1710;
+            border: 1px solid #1e382a;
+            border-radius: 12px;
+            padding: 12px;
+        }
+        .info small {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+        .notes-section {
+            margin-top: 16px;
+            background: #0b1710;
+            border: 1px solid #1e382a;
+            border-radius: 12px;
+            padding: 14px;
+        }
+        .notes-section textarea {
+            width: 100%;
+            background: #09150f;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 10px;
+            color: var(--text);
+            resize: vertical;
+            min-height: 80px;
+        }
+        .toast {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            background: #183124;
+            border: 1px solid #3c654f;
+            padding: 12px 16px;
+            border-radius: 11px;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: .2s;
+            z-index: 50;
+        }
+        .toast.show { opacity: 1; transform: none; }
+        .tabs-section {
+            display: flex;
+            gap: 4px;
+            background: #0a1710;
+            border-radius: 12px;
+            padding: 4px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .tabs-section button {
+            border: 0;
+            background: none;
+            color: var(--muted);
+            padding: 10px 16px;
+            border-radius: 9px;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .tabs-section button.active {
+            background: var(--panel2);
+            color: var(--text);
+        }
+        .permission-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 6px;
+            margin: 6px 0;
+        }
+        .perm-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #0b1710;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+        .perm-category {
+            margin-top: 12px;
+            border-top: 1px solid var(--line);
+            padding-top: 8px;
+        }
+        .perm-category b { color: var(--muted); font-size: 13px; }
+        .badge-manager {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 10px 0;
+        }
+        .badge-manager .badge-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #0b1710;
+            padding: 4px 8px;
+            border-radius: 6px;
+        }
+        .badge-manager .badge-item button {
+            background: none;
+            border: none;
+            color: var(--danger);
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .profile-tabs {
+            display: flex;
+            gap: 4px;
+            background: #0a1710;
+            border-radius: 10px;
+            padding: 4px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+        .profile-tabs button {
+            flex: 1;
+            border: 0;
+            background: none;
+            color: var(--muted);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .profile-tabs button.active {
+            background: var(--panel2);
+            color: var(--text);
+        }
+        .profile-tab-content { margin-top: 16px; }
+        .badge-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .settings-btn {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 8px;
+            color: var(--text);
+        }
+        .settings-btn:hover { background: var(--panel2); }
+        .theme-selector {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 10px 0;
+        }
+        .theme-btn {
+            padding: 10px 18px;
+            border-radius: 10px;
+            border: 2px solid var(--line);
+            background: var(--panel);
+            color: var(--text);
+            font-weight: 700;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .theme-btn:hover { border-color: var(--accent); }
+        .theme-btn.active {
+            border-color: var(--accent);
+            background: var(--panel2);
+        }
+        .color-picker-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .color-picker-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .color-picker-item label {
+            font-size: 13px;
+            min-width: 80px;
+            color: var(--muted);
+        }
+        .color-picker-item input[type="color"] {
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            padding: 2px;
+            background: transparent;
+            cursor: pointer;
+        }
+        .color-picker-item input[type="text"] {
+            width: 70px;
+            padding: 4px 6px;
+            font-size: 12px;
+            background: #09150f;
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            color: var(--text);
+        }
+        .notif-icon {
+            position: relative;
+            font-size: 22px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 8px;
+            background: none;
+            border: none;
+            color: var(--text);
+        }
+        .notif-icon .badge-count {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: var(--danger);
+            color: #fff;
+            border-radius: 50%;
+            font-size: 10px;
+            padding: 0 5px;
+            font-weight: 700;
+            min-width: 18px;
+            text-align: center;
+        }
+        .notif-dropdown {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background: #0d1a13e8;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            width: 340px;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 8px 0;
+            z-index: 15;
+            box-shadow: 0 8px 30px #0006;
+        }
+        .notif-dropdown .notif-item {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--line);
+            font-size: 13px;
+            color: var(--text);
+        }
+        .notif-dropdown .notif-item .time {
+            color: var(--muted);
+            font-size: 11px;
+            display: block;
+        }
+        .notif-dropdown .empty {
+            padding: 16px;
+            text-align: center;
+            color: var(--muted);
+        }
+        /* Виджеты */
+        .widget-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+            margin: 16px 0;
+        }
+        .widget {
+            background: #0f1e16;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 16px;
+        }
+        .widget h4 { margin: 0 0 8px; color: var(--muted); font-weight: 400; }
+        .widget .value { font-size: 28px; font-weight: 800; }
+        .widget .list-item { font-size: 14px; padding: 4px 0; border-bottom: 1px solid #1a3024; }
+        .qr-img { max-width: 200px; margin: 10px auto; display: block; background: white; padding: 8px; border-radius: 8px; }
+        @media(max-width:760px) {
+            .color-picker-grid { grid-template-columns: 1fr; }
+            .head { flex-direction: column; }
+            .head h1 { font-size: 32px; }
+            .stats { grid-template-columns: 1fr 1fr; }
+            .charts-compact { grid-template-columns: 1fr; }
+            .grid, .info { grid-template-columns: 1fr; }
+            .profile { grid-template-columns: 1fr; }
+            .top { padding: 0 3%; }
+            .userbar span { display: none; }
+            .toolbar-row { flex-direction: column; align-items: stretch; }
+            .filter-group { flex-wrap: wrap; }
+            .tabs-section button { padding: 6px 10px; font-size: 12px; }
+            .notif-dropdown { width: 280px; right: 10px; }
+            .widget-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ===== АВТОРИЗАЦИЯ ===== -->
+    <div id="auth" class="auth">
+        <div class="auth-card">
+            <div class="logo">К</div>
+            <h1>Команда проекта</h1>
+            <p class="muted">Вход в систему сотрудников</p>
+            <div class="tabs">
+                <button id="loginTab" class="active" onclick="switchAuth('login')">Вход</button>
+                <button id="registerTab" onclick="switchAuth('register')">Регистрация</button>
+            </div>
+            <form id="loginForm" onsubmit="login(event)">
+                <div class="field"><label>Логин</label><input id="loginLogin" required autocomplete="username"></div>
+                <div class="field"><label>Пароль</label><input id="loginPass" type="password" required autocomplete="current-password"></div>
+                <div id="login2faField" class="field hidden"><label>Код 2FA</label><input id="login2faCode" type="text" placeholder="6 цифр"></div>
+                <button class="primary">Войти</button>
+                <div id="loginError" class="error"></div>
+            </form>
+            <form id="registerForm" class="hidden" onsubmit="register(event)">
+                <div class="field"><label>Имя</label><input id="regName" required></div>
+                <div class="field"><label>Логин</label><input id="regLogin" required autocomplete="username"></div>
+                <div class="field"><label>Пароль</label><input id="regPass" type="password" minlength="6" required autocomplete="new-password"></div>
+                <button class="primary">Зарегистрироваться</button>
+                <div id="registerError" class="error"></div>
+                <div class="note" id="registerNote"></div>
+            </form>
+            <div class="note">Важно: это версия без сервера. Данные хранятся только в браузере. Для настоящей защиты аккаунтов нужен сервер и база данных.</div>
+        </div>
+    </div>
+
+    <!-- ===== ОСНОВНОЕ ПРИЛОЖЕНИЕ ===== -->
+    <div id="app" class="app hidden">
+        <header class="top">
+            <div class="brand">Команда проекта</div>
+            <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:center;">
+                <input class="global-search" id="globalSearch" placeholder="🔍 Глобальный поиск..." oninput="globalSearch()">
+            </div>
+            <div class="top-actions">
+                <button class="btn small" onclick="exportJSON()" title="Экспорт JSON">📤 JSON</button>
+                <button class="btn small" onclick="document.getElementById('importFile').click()" title="Импорт JSON">📥 JSON</button>
+                <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
+                <div style="position:relative;">
+                    <button class="notif-icon" onclick="toggleNotifications()">🔔<span id="notifCount" class="badge-count">0</span></button>
+                    <div id="notifDropdown" class="notif-dropdown hidden"></div>
+                </div>
+                <button class="settings-btn" onclick="openSettings()" title="Настройки цветов">🎨</button>
+                <div class="userbar">
+                    <div class="avatar" id="topAvatar">?</div>
+                    <span id="topUser"></span>
+                    <button class="logout" onclick="logout()">Выйти</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="container">
+            <section class="head">
+                <div>
+                    <div class="eyebrow">Staff system</div>
+                    <h1>Управление командой</h1>
+                    <p class="muted">Сотрудники, задачи, логи, права, аналитика и профили.</p>
+                </div>
+                <div class="actions">
+                    <button id="createBtn" class="btn primary2" onclick="openCreate()">＋ Создать профиль</button>
+                    <button id="exportBtn" class="btn" onclick="exportCSV()">⇩ Экспорт CSV</button>
+                </div>
+            </section>
+
+            <!-- Вкладки навигации -->
+            <div class="tabs-section" id="tabsContainer">
+                <button id="tabStaff" class="active" onclick="switchTab('staff')">👥 Сотрудники</button>
+                <button id="tabTasks" onclick="switchTab('tasks')">📋 Задачи</button>
+                <button id="tabLogs" onclick="switchTab('logs')">📜 Логи</button>
+                <button id="tabRoles" onclick="switchTab('roles')">⚙ Права и роли</button>
+                <button id="tabAnalytics" onclick="switchTab('analytics')">📊 Аналитика</button>
+                <button id="tabProfile" onclick="switchTab('profile')">👤 Профиль</button>
+            </div>
+
+            <!-- Вкладка Сотрудники -->
+            <div id="sectionStaff">
+                <section class="stats">
+                    <div class="stat"><b id="count">0</b><span>сотрудников</span></div>
+                    <div class="stat"><b id="rolesCount">0</b><span>должностей</span></div>
+                    <div class="stat"><b id="online">1</b><span>активный</span></div>
+                    <div class="stat"><b id="withNotes">0</b><span>с заметками</span></div>
+                </section>
+                <section class="charts-compact">
+                    <div class="chart-box"><h3>Распределение по должностям</h3><canvas id="rolesChart" height="150"></canvas></div>
+                    <div class="chart-box"><h3>Динамика роста</h3><canvas id="growthChart" height="150"></canvas></div>
+                </section>
+                <section class="card">
+                    <div class="toolbar">
+                        <div class="toolbar-row">
+                            <input class="search" id="search" placeholder="Поиск по имени, логину, Discord…" oninput="renderStaff()">
+                            <select id="roleFilter" onchange="renderStaff()"><option value="">Все должности</option></select>
+                            <button class="btn small" onclick="toggleAdvancedFilters()">🔍 Расширенный</button>
+                        </div>
+                        <div class="toolbar-row advanced-filters hidden" id="advancedFilters">
+                            <div class="filter-group"><label>Вступление</label><input type="date" id="filterJoinFrom" onchange="renderStaff()"><span>—</span><input type="date" id="filterJoinTo" onchange="renderStaff()"></div>
+                            <div class="filter-group"><label>Повышение</label><input type="date" id="filterPromotionFrom" onchange="renderStaff()"><span>—</span><input type="date" id="filterPromotionTo" onchange="renderStaff()"></div>
+                            <div class="filter-group"><label>Discord</label><select id="filterDiscord" onchange="renderStaff()"><option value="">Все</option><option value="yes">Есть</option><option value="no">Нет</option></select></div>
+                            <div class="filter-group"><label>Статус</label><select id="filterFrozen" onchange="renderStaff()"><option value="">Все</option><option value="active">Активен</option><option value="frozen">Заморожен</option><option value="vacation">В отпуске</option></select></div>
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Профиль</th><th>Логин</th><th>Должность</th><th>Вступление</th><th>Повышение</th><th>Discord</th><th>Бейджи</th><th>Статус</th><th></th></tr></thead>
+                            <tbody id="tbody"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Вкладка Задачи -->
+            <div id="sectionTasks" class="hidden">
+                <div class="actions" style="margin-bottom:16px;" id="taskActions">
+                    <button class="btn primary2" onclick="openTaskCreate()">＋ Новая задача</button>
+                </div>
+                <section class="card">
+                    <div class="toolbar"><div class="toolbar-row">
+                            <input class="search" id="taskSearch" placeholder="Поиск по названию, исполнителю..." oninput="renderTasks()">
+                            <select id="taskStatusFilter" onchange="renderTasks()"><option value="">Все статусы</option><option value="open">Открыта</option><option value="in_progress">В работе</option><option value="done">Выполнена</option></select>
+                            <select id="taskAssigneeFilter" onchange="renderTasks()"><option value="">Все исполнители</option></select>
+                        </div></div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Название</th><th>Исполнитель</th><th>Дедлайн</th><th>Статус</th><th>Приоритет</th><th>Действия</th></tr></thead>
+                            <tbody id="taskTbody"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Вкладка Логи -->
+            <div id="sectionLogs" class="hidden">
+                <section class="card">
+                    <div class="toolbar"><div class="toolbar-row">
+                            <input class="search" id="logSearch" placeholder="Поиск по действию, пользователю..." oninput="renderLogs()">
+                            <button class="btn small" onclick="clearLogs()">🗑 Очистить логи</button>
+                        </div></div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Время</th><th>Пользователь</th><th>Действие</th></tr></thead>
+                            <tbody id="logTbody"></tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Вкладка Права -->
+            <div id="sectionRoles" class="hidden">
+                <section class="card">
+                    <div class="toolbar"><h3 style="margin:0;">Настройка прав для ролей</h3></div>
+                    <div style="padding:16px;">
+                        <p class="muted">Здесь вы можете изменить права для каждой должности. Изменения применяются ко всем сотрудникам с этой ролью.</p>
+                        <div id="rolesPermissionsContainer"></div>
+                        <div class="modal-actions"><button class="btn primary2" onclick="saveRolePermissions()">Сохранить изменения прав</button></div>
+                    </div>
+                </section>
+                <section class="card" style="margin-top:16px;">
+                    <div class="toolbar"><h3 style="margin:0;">Шаблоны ролей</h3></div>
+                    <div style="padding:16px;">
+                        <p class="muted">Шаблоны — это предустановленные наборы прав для быстрого создания сотрудников.</p>
+                        <button class="btn primary2" onclick="openTemplateEditor()">✎ Редактировать шаблоны</button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ===== ВКЛАДКА: АНАЛИТИКА (теперь дашборд) ===== -->
+            <div id="sectionAnalytics" class="hidden">
+                <section class="card">
+                    <div class="toolbar"><h3 style="margin:0;">📊 Дашборд</h3></div>
+                    <div style="padding:16px;" id="analyticsContent">
+                        <!-- Виджеты рендерятся в renderAnalytics -->
+                    </div>
+                </section>
+                <section class="charts-compact" style="margin-top:20px;">
+                    <div class="chart-box"><h3>Распределение по должностям</h3><canvas id="rolesChart2" height="150"></canvas></div>
+                    <div class="chart-box"><h3>Динамика роста</h3><canvas id="growthChart2" height="150"></canvas></div>
+                </section>
+            </div>
+
+            <!-- ===== ВКЛАДКА: ПРОФИЛЬ ===== -->
+            <div id="sectionProfile" class="hidden">
+                <div id="profileContainer"></div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- ===== МОДАЛЬНОЕ ОКНО ===== -->
+    <div id="modal" class="modal hidden" onclick="if(event.target===this)closeModal()">
+        <div class="modal-card" id="modalContent"></div>
+    </div>
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ============================================================
+        //  ПОЛНОСТЬЮ РАБОЧАЯ ВЕРСИЯ — все функции на месте
+        // ============================================================
+
+        // ------------------------------ БАЗОВЫЕ ДАННЫЕ ------------------------------
+        const rolesList = [
+            "Владелец",
+            "Разработчик",
+            "Куратор",
+            "Технический администратор",
+            "Главный администратор",
+            "Старший администратор",
+            "Главный модератор",
+            "Старший модератор",
+            "Модератор",
+            "Младший модератор(стажёр)"
+        ];
+
+        const ALL_PERMISSIONS = [
+            'view_staff', 'create_user', 'edit_user', 'delete_user',
+            'view_tasks', 'create_task', 'edit_task', 'delete_task', 'assign_task',
+            'view_logs', 'clear_logs',
+            'manage_roles', 'manage_templates', 'manage_permissions',
+            'export_data', 'view_notes', 'edit_notes',
+            'view_all_tasks',
+            'freeze_user'
+        ];
+
+        const PERM_LABELS = {
+            view_staff: 'Просмотр сотрудников',
+            create_user: 'Создание сотрудников',
+            edit_user: 'Редактирование сотрудников',
+            delete_user: 'Удаление сотрудников',
+            view_tasks: 'Просмотр задач',
+            create_task: 'Создание задач',
+            edit_task: 'Редактирование задач',
+            delete_task: 'Удаление задач',
+            assign_task: 'Назначение задач',
+            view_logs: 'Просмотр логов',
+            clear_logs: 'Очистка логов',
+            manage_roles: 'Управление ролями',
+            manage_templates: 'Управление шаблонами',
+            manage_permissions: 'Управление правами',
+            export_data: 'Экспорт данных',
+            view_notes: 'Просмотр заметок',
+            edit_notes: 'Редактирование заметок',
+            view_all_tasks: 'Просмотр всех задач',
+            freeze_user: 'Заморозка пользователей'
+        };
+
+        const PERM_CATEGORIES = {
+            'Пользователи': ['view_staff', 'create_user', 'edit_user', 'delete_user', 'freeze_user'],
+            'Задачи': ['view_tasks', 'create_task', 'edit_task', 'delete_task', 'assign_task', 'view_all_tasks'],
+            'Логи': ['view_logs', 'clear_logs'],
+            'Управление': ['manage_roles', 'manage_templates', 'manage_permissions', 'export_data'],
+            'Заметки': ['view_notes', 'edit_notes']
+        };
+
+        const STAFF_VIEW_ROLES = ['Владелец', 'Разработчик', 'Куратор', 'Технический администратор', 'Главный администратор'];
+
+        const defaultRolePermissions = {
+            'Владелец': ALL_PERMISSIONS,
+            'Разработчик': ALL_PERMISSIONS,
+            'Куратор': ALL_PERMISSIONS,
+            'Технический администратор': ALL_PERMISSIONS,
+            'Главный администратор': ALL_PERMISSIONS,
+            'Старший администратор': ['view_tasks', 'assign_task', 'freeze_user'],
+            'Главный модератор': ['view_tasks'],
+            'Старший модератор': ['view_tasks'],
+            'Модератор': ['view_tasks'],
+            'Младший модератор(стажёр)': ['view_tasks']
+        };
+
+        const PRESET_BADGES = [
+            { name: 'Лидер', icon: '👑' },
+            { name: 'Ответственный', icon: '✅' },
+            { name: 'Креативный', icon: '🎨' },
+            { name: 'Тимлид', icon: '🧑‍💼' },
+            { name: 'Эксперт', icon: '🧠' },
+            { name: 'Наставник', icon: '📚' },
+            { name: 'Исполнительный', icon: '📋' },
+            { name: 'Инноватор', icon: '💡' },
+            { name: 'Командный игрок', icon: '🤝' },
+            { name: 'Стример', icon: '🎥' },
+            { name: 'Строитель', icon: '🏗️' },
+            { name: 'PVP-мастер', icon: '⚔️' },
+            { name: 'Дипломат', icon: '🤝' },
+            { name: 'Стратег', icon: '♟️' }
+        ];
+
+        const THEMES = {
+            dark: { bg: '#08110d', panel: '#102018', panel2: '#152a20', line: '#284638', text: '#eef8f2',
+                muted: '#9db3a7', accent: '#39c982', accent2: '#2e9dff', danger: '#e45c6d', gold: '#e5c35c' },
+            light: { bg: '#f0f5f2', panel: '#e0eae4', panel2: '#d0ded6', line: '#b0c8bc', text: '#1a2e24',
+                muted: '#4a6a5a', accent: '#2a8f5a', accent2: '#1a7adf', danger: '#d44a5a', gold: '#c9a84a' },
+            green: { bg: '#0a1a12', panel: '#0f2a1e', panel2: '#1a3d2a', line: '#2a5a3e', text: '#e8f5e8',
+                muted: '#8ab89a', accent: '#4ae0a0', accent2: '#3ac8a0', danger: '#e07070', gold: '#e8c860' },
+            blue: { bg: '#0c1420', panel: '#14283a', panel2: '#1a3850', line: '#2a5a7a', text: '#e8f0f8',
+                muted: '#90b0c8', accent: '#5ab0e8', accent2: '#3a8ad0', danger: '#e07080', gold: '#e8c860' },
+            gold: { bg: '#1a160e', panel: '#2a241a', panel2: '#3d3428', line: '#5a4e3a', text: '#f8f0e0',
+                muted: '#c8b898', accent: '#e8c860', accent2: '#d4b048', danger: '#e07070', gold: '#f0d878' }
+        };
+        const COLOR_KEYS = ['bg', 'panel', 'panel2', 'line', 'text', 'muted', 'accent', 'accent2', 'danger', 'gold'];
+        const COLOR_LABELS = { bg: 'Фон', panel: 'Панель', panel2: 'Вторая панель', line: 'Линии', text: 'Текст',
+            muted: 'Приглушённый', accent: 'Акцент', accent2: 'Второй акцент', danger: 'Опасный', gold: 'Золотой' };
+
+        // ------------------------------ ЗАГРУЗКА ДАННЫХ ------------------------------
+        let rolePermissions = JSON.parse(localStorage.getItem('rolePermissions')) || {};
+        for (const role of rolesList) {
+            if (!rolePermissions[role]) {
+                rolePermissions[role] = defaultRolePermissions[role] || [];
+            }
+            if (!STAFF_VIEW_ROLES.includes(role)) {
+                rolePermissions[role] = rolePermissions[role].filter(p => p !== 'view_staff');
+            } else {
+                if (!rolePermissions[role].includes('view_staff')) rolePermissions[role].push('view_staff');
+            }
+        }
+        localStorage.setItem('rolePermissions', JSON.stringify(rolePermissions));
+
+        let templates = JSON.parse(localStorage.getItem('templates')) || {
+            'Модератор': ['view_tasks', 'view_notes'],
+            'Администратор': ['view_tasks', 'edit_user', 'create_task', 'edit_task', 'assign_task', 'view_logs',
+                'view_notes', 'edit_notes'
+            ],
+            'Куратор': ['view_staff', 'view_tasks', 'create_task', 'edit_task', 'assign_task', 'view_notes']
+        };
+
+        let users = JSON.parse(localStorage.getItem('teamUsers')) || [];
+        if (!Array.isArray(users)) users = [];
+        users.forEach(u => {
+            if (u.frozen === undefined) u.frozen = false;
+            if (u.frozenReason === undefined) u.frozenReason = '';
+            if (u.frozenUntil === undefined) u.frozenUntil = '';
+            if (u.onVacation === undefined) u.onVacation = false;
+            if (u.vacationFrom === undefined) u.vacationFrom = '';
+            if (u.vacationTo === undefined) u.vacationTo = '';
+            if (!u.history) u.history = [];
+            if (!u.totpSecret) u.totpSecret = '';
+            if (u.totpEnabled === undefined) u.totpEnabled = false;
+            if (!u.notificationSettings) {
+                u.notificationSettings = { tasks: true, status: true, freeze: true, vacation: true };
+            }
+        });
+        let currentId = localStorage.getItem('teamCurrentUser') || null;
+        let tasks = JSON.parse(localStorage.getItem('tasks')) || [];
+        let logs = JSON.parse(localStorage.getItem('auditLogs')) || [];
+        let notifications = JSON.parse(localStorage.getItem('notifications')) || [];
+        notifications.forEach(n => { if (n.read === undefined) n.read = false; });
+
+        let profileUserId = null;
+        let notifOpen = false;
+
+        // ------------------------------ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ------------------------------
+        function uid() { return crypto.randomUUID ? crypto.randomUUID() : Date.now() + '_' + Math.random().toString(36).slice(2); }
+        async function hashPassword(password) {
+            const data = new TextEncoder().encode(password);
+            const hash = await crypto.subtle.digest('SHA-256', data);
+            return [...new Uint8Array(hash)].map(x => x.toString(16).padStart(2, '0')).join('');
+        }
+
+        function esc(v) { return String(v ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '"',
+            "'": '&#039;' })[m]); }
+
+        function saveUsers() { localStorage.setItem('teamUsers', JSON.stringify(users)); }
+        function saveTasks() { localStorage.setItem('tasks', JSON.stringify(tasks)); }
+        function saveLogs() { localStorage.setItem('auditLogs', JSON.stringify(logs)); }
+        function saveRolePermissions() { localStorage.setItem('rolePermissions', JSON.stringify(rolePermissions)); }
+        function saveTemplates() { localStorage.setItem('templates', JSON.stringify(templates)); }
+        function saveNotifications() { localStorage.setItem('notifications', JSON.stringify(notifications)); }
+
+        function current() { return users.find(u => u.id === currentId); }
+
+        function hasPermission(user, perm) {
+            if (!user) return false;
+            if (user.role === 'Владелец' || user.role === 'Разработчик') return true;
+            const perms = rolePermissions[user.role] || [];
+            return perms.includes(perm);
+        }
+        function can(user, perm) { return hasPermission(user, perm); }
+
+        function isFrozen(user) { return user ? user.frozen === true : false; }
+        function isOnVacation(user) { return user ? user.onVacation === true : false; }
+
+        function checkBlocked() {
+            const u = current();
+            if (isFrozen(u)) { toast('❌ Ваш аккаунт заморожен. Вы не можете изменять данные.'); return false; }
+            if (isOnVacation(u)) { toast('🌴 Вы в отпуске. Изменения запрещены.'); return false; }
+            return true;
+        }
+
+        function addLog(action, details = '') {
+            const user = current();
+            logs.push({ time: new Date().toISOString(), user: user ? user.name : 'Система', role: user ? user.role : '',
+                action: action + (details ? ' (' + details + ')' : '') });
+            if (logs.length > 500) logs.shift();
+            saveLogs();
+        }
+
+        function addHistoryEntry(userId, action, details = '') {
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            const currentUser = current();
+            const by = currentUser ? currentUser.name : 'Система';
+            if (!user.history) user.history = [];
+            user.history.push({ timestamp: new Date().toISOString(), by, action, details });
+            if (user.history.length > 200) user.history.shift();
+            saveUsers();
+        }
+
+        // ------------------------------ TOTP (2FA) ------------------------------
+        function base32Encode(buffer) {
+            const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+            let bits = 0,
+                value = 0,
+                output = '';
+            for (let i = 0; i < buffer.length; i++) {
+                value = (value << 8) | buffer[i];
+                bits += 8;
+                while (bits >= 5) {
+                    output += alphabet[(value >>> (bits - 5)) & 31];
+                    bits -= 5;
+                }
+            }
+            if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
+            return output;
+        }
+
+        function base32Decode(str) {
+            const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+            str = str.toUpperCase().replace(/=+$/, '');
+            let bits = 0,
+                value = 0,
+                output = [];
+            for (let i = 0; i < str.length; i++) {
+                const index = alphabet.indexOf(str[i]);
+                if (index === -1) continue;
+                value = (value << 5) | index;
+                bits += 5;
+                if (bits >= 8) {
+                    output.push((value >>> (bits - 8)) & 0xFF);
+                    bits -= 8;
+                }
+            }
+            return new Uint8Array(output);
+        }
+
+        function generateSecret() {
+            const array = new Uint8Array(10);
+            crypto.getRandomValues(array);
+            return base32Encode(array);
+        }
+
+        function sha1Impl(data) {
+            function rotateLeft(n, s) { return (n << s) | (n >>> (32 - s)); }
+            let h0 = 0x67452301,
+                h1 = 0xEFCDAB89,
+                h2 = 0x98BADCFE,
+                h3 = 0x10325476,
+                h4 = 0xC3D2E1F0;
+            const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+            const length = bytes.length;
+            const blocks = Math.ceil((length + 9) / 64);
+            const buffer = new Uint8Array(blocks * 64);
+            buffer.set(bytes);
+            buffer[length] = 0x80;
+            const bitLength = length * 8;
+            const view = new DataView(buffer.buffer);
+            view.setUint32(buffer.length - 4, bitLength, false);
+            for (let i = 0; i < blocks; i++) {
+                const w = new Array(80);
+                const offset = i * 64;
+                for (let j = 0; j < 16; j++) { w[j] = view.getUint32(offset + j * 4, false); }
+                for (let j = 16; j < 80; j++) { w[j] = rotateLeft(w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16], 1); }
+                let a = h0,
+                    b = h1,
+                    c = h2,
+                    d = h3,
+                    e = h4;
+                for (let j = 0; j < 80; j++) {
+                    let f, k;
+                    if (j < 20) { f = (b & c) | (~b & d);
+                        k = 0x5A827999; } else if (j < 40) { f = b ^ c ^ d;
+                        k = 0x6ED9EBA1; } else if (j < 60) { f = (b & c) | (b & d) | (c & d);
+                        k = 0x8F1BBCDC; } else { f = b ^ c ^ d;
+                        k = 0xCA62C1D6; }
+                    const temp = rotateLeft(a, 5) + f + e + k + w[j];
+                    e = d;
+                    d = c;
+                    c = rotateLeft(b, 30);
+                    b = a;
+                    a = temp;
+                }
+                h0 = (h0 + a) | 0;
+                h1 = (h1 + b) | 0;
+                h2 = (h2 + c) | 0;
+                h3 = (h3 + d) | 0;
+                h4 = (h4 + e) | 0;
+            }
+            const result = new Uint8Array(20);
+            const view2 = new DataView(result.buffer);
+            view2.setUint32(0, h0, false);
+            view2.setUint32(4, h1, false);
+            view2.setUint32(8, h2, false);
+            view2.setUint32(12, h3, false);
+            view2.setUint32(16, h4, false);
+            return result;
+        }
+
+        function totp(secret, time = Date.now() / 30000) {
+            const key = base32Decode(secret);
+            const timeBuf = new ArrayBuffer(8);
+            const view = new DataView(timeBuf);
+            const t = Math.floor(time);
+            view.setUint32(4, t, false);
+            const hmac = (function(k, d) {
+                const blockSize = 64;
+                const ipad = new Uint8Array(blockSize);
+                const opad = new Uint8Array(blockSize);
+                for (let i = 0; i < blockSize; i++) { ipad[i] = 0x36;
+                    opad[i] = 0x5c; }
+                const keyArr = new Uint8Array(k);
+                for (let i = 0; i < keyArr.length; i++) { ipad[i] ^= keyArr[i];
+                    opad[i] ^= keyArr[i]; }
+                const dataBuf = new Uint8Array(d);
+                const inner = new Uint8Array(ipad.length + dataBuf.length);
+                inner.set(ipad);
+                inner.set(dataBuf, ipad.length);
+                const innerHash = sha1Impl(inner);
+                const outer = new Uint8Array(opad.length + innerHash.length);
+                outer.set(opad);
+                outer.set(innerHash, opad.length);
+                return sha1Impl(outer);
+            })(key, new Uint8Array(timeBuf));
+            const offset = hmac[19] & 0xF;
+            const code = ((hmac[offset] & 0x7F) << 24) |
+                ((hmac[offset + 1] & 0xFF) << 16) |
+                ((hmac[offset + 2] & 0xFF) << 8) |
+                (hmac[offset + 3] & 0xFF);
+            return String(code % 1000000).padStart(6, '0');
+        }
+
+        // ------------------------------ УВЕДОМЛЕНИЯ ------------------------------
+        function addNotification(userId, text) {
+            if (!userId) return;
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            notifications.push({ userId, text, time: new Date().toISOString(), read: false });
+            if (notifications.length > 100) notifications.shift();
+            saveNotifications();
+            updateNotifBadge();
+            if (notifOpen) renderNotifications();
+        }
+
+        function updateNotifBadge() {
+            const user = current();
+            if (!user) { document.getElementById('notifCount').textContent = '0'; return; }
+            const count = notifications.filter(n => n.userId === user.id && !n.read).length;
+            const badge = document.getElementById('notifCount');
+            if (badge) { badge.textContent = count;
+                badge.classList.toggle('hidden', count === 0); }
+        }
+
+        function renderNotifications() {
+            const user = current();
+            if (!user) return;
+            const dd = document.getElementById('notifDropdown');
+            const list = notifications.filter(n => n.userId === user.id).slice(-20).reverse();
+            if (!list.length) { dd.innerHTML = '<div class="empty">Нет уведомлений</div>'; return; }
+            dd.innerHTML = list.map(n =>
+                `<div class="notif-item">${esc(n.text)}<span class="time">${new Date(n.time).toLocaleString()}</span></div>`
+            ).join('');
+        }
+
+        function toggleNotifications() {
+            const user = current();
+            if (!user) return;
+            notifOpen = !notifOpen;
+            const dd = document.getElementById('notifDropdown');
+            if (notifOpen) {
+                dd.classList.remove('hidden');
+                renderNotifications();
+                notifications.forEach(n => { if (n.userId === user.id) n.read = true; });
+                saveNotifications();
+                updateNotifBadge();
+            } else { dd.classList.add('hidden'); }
+        }
+
+        // ------------------------------ ГЛОБАЛЬНЫЕ ФУНКЦИИ (были в оригинале) ------------------------------
+        function globalSearch() {
+            const q = document.getElementById('globalSearch').value.toLowerCase().trim();
+            document.getElementById('search').value = q;
+            renderStaff();
+        }
+
+        function dateNow() { return new Date().toISOString().slice(0, 10); }
+
+        function initials(name) { return (name || '?').trim().split(/\s+/).slice(0, 2).map(x => x[0]).join('').toUpperCase(); }
+
+        function roleClass(role) {
+            if (role === 'Главный администратор') return 'ga';
+            if (role.includes('администратор')) return 'admin';
+            if (role.includes('модератор')) return 'mod';
+            if (role === 'Разработчик') return 'dev';
+            return '';
+        }
+
+        function getUserColors(user) {
+            if (!user) return THEMES.dark;
+            if (user.customColors) return user.customColors;
+            if (user.theme && THEMES[user.theme]) return THEMES[user.theme];
+            return THEMES.dark;
+        }
+
+        function applyColors(colors) {
+            const root = document.documentElement;
+            for (const key of COLOR_KEYS) { if (colors[key]) root.style.setProperty('--' + key, colors[key]); }
+        }
+
+        function saveUserColors(userId, colors) {
+            const user = users.find(u => u.id === userId);
+            if (!user) return;
+            user.customColors = colors;
+            delete user.theme;
+            saveUsers();
+            if (userId === currentId) applyColors(colors);
+        }
+
+        function setUserTheme(userId, themeName) {
+            const theme = THEMES[themeName];
+            if (!theme) return;
+            saveUserColors(userId, { ...theme });
+            const user = users.find(u => u.id === userId);
+            if (user) { user.theme = themeName;
+                saveUsers(); }
+        }
+
+        // ------------------------------ АВТОРИЗАЦИЯ ------------------------------
+        function switchAuth(type) {
+            document.getElementById('loginForm').classList.toggle('hidden', type !== 'login');
+            document.getElementById('registerForm').classList.toggle('hidden', type !== 'register');
+            document.getElementById('loginTab').classList.toggle('active', type === 'login');
+            document.getElementById('registerTab').classList.toggle('active', type === 'register');
+            document.getElementById('login2faField').classList.add('hidden');
+            document.getElementById('registerNote').textContent = users.length ?
+                'Новых сотрудников создаёт только тот, у кого есть право create_user.' :
+                'Первый аккаунт создаётся один раз и получает права Владельца.';
+        }
+
+        async function register(e) {
+            e.preventDefault();
+            const err = document.getElementById('registerError');
+            err.textContent = '';
+            if (users.length) { err.textContent = 'Регистрация закрыта. Обратитесь к администратору.'; return; }
+            const name = document.getElementById('regName').value.trim(),
+                login = document.getElementById('regLogin').value.trim();
+            const pass = document.getElementById('regPass').value;
+            if (users.some(u => u.login.toLowerCase() === login.toLowerCase())) { err.textContent = 'Такой логин уже существует.'; return; }
+            const newUser = {
+                id: uid(),
+                name,
+                login,
+                password: await hashPassword(pass),
+                role: 'Владелец',
+                join: dateNow(),
+                promotion: '',
+                discord: '',
+                notes: '',
+                customBadges: [],
+                createdAt: Date.now(),
+                customColors: { ...THEMES.dark },
+                frozen: false,
+                frozenReason: '',
+                frozenUntil: '',
+                onVacation: false,
+                vacationFrom: '',
+                vacationTo: '',
+                history: [],
+                totpSecret: '',
+                totpEnabled: false,
+                notificationSettings: { tasks: true, status: true, freeze: true, vacation: true }
+            };
+            users.push(newUser);
+            saveUsers();
+            currentId = newUser.id;
+            localStorage.setItem('teamCurrentUser', currentId);
+            addLog('Создан первый пользователь (Владелец)');
+            addHistoryEntry(newUser.id, 'Создан аккаунт', 'Первый пользователь');
+            showApp();
+            toast('Владелец создан');
+        }
+
+        async function login(e) {
+            e.preventDefault();
+            const err = document.getElementById('loginError');
+            err.textContent = '';
+            const login = document.getElementById('loginLogin').value.trim(),
+                pass = document.getElementById('loginPass').value;
+            const u = users.find(x => x.login.toLowerCase() === login.toLowerCase());
+            if (!u || u.password !== await hashPassword(pass)) { err.textContent = 'Неверный логин или пароль.'; return; }
+            if (u.totpEnabled) {
+                const code = document.getElementById('login2faCode').value.trim();
+                if (!code) {
+                    document.getElementById('login2faField').classList.remove('hidden');
+                    err.textContent = 'Введите код 2FA';
+                    return;
+                }
+                if (totp(u.totpSecret) !== code) { err.textContent = 'Неверный код 2FA'; return; }
+            }
+            if (isFrozen(u)) { toast('⚠️ Ваш аккаунт заморожен. Вы можете просматривать, но не изменять данные.'); }
+            if (isOnVacation(u)) { toast('🌴 Вы в отпуске. Вы можете просматривать, но не изменять данные.'); }
+            currentId = u.id;
+            localStorage.setItem('teamCurrentUser', currentId);
+            addLog('Вход в систему');
+            showApp();
+        }
+
+        function logout() {
+            currentId = null;
+            localStorage.removeItem('teamCurrentUser');
+            document.getElementById('app').classList.add('hidden');
+            document.getElementById('auth').classList.remove('hidden');
+            switchAuth('login');
+            document.getElementById('login2faField').classList.add('hidden');
+        }
+
+        // ------------------------------ ПОКАЗ ПРИЛОЖЕНИЯ ------------------------------
+        function showApp() {
+            if (!current()) return logout();
+            document.getElementById('auth').classList.add('hidden');
+            document.getElementById('app').classList.remove('hidden');
+            const u = current();
+            document.getElementById('topUser').textContent = u.name + ' · ' + u.role;
+            document.getElementById('topAvatar').textContent = initials(u.name);
+            document.getElementById('createBtn').classList.toggle('hidden', !can(u, 'create_user'));
+            document.getElementById('exportBtn').classList.toggle('hidden', !can(u, 'export_data'));
+
+            profileUserId = u.id;
+            const colors = getUserColors(u);
+            applyColors(colors);
+
+            if (!window.rolesChartInstance) initCharts();
+            updateTabsVisibility();
+            renderStaff();
+            renderTasks();
+            renderLogs();
+            renderRolePermissions();
+            renderAnalytics();
+            updateNotifBadge();
+
+            let defaultTab = 'tasks';
+            if (can(u, 'view_staff')) defaultTab = 'staff';
+            switchTab(defaultTab);
+        }
+
+        // ------------------------------ ВИДИМОСТЬ ВКЛАДОК ------------------------------
+        function updateTabsVisibility() {
+            const u = current();
+            const tabs = {
+                staff: can(u, 'view_staff'),
+                logs: can(u, 'view_logs'),
+                roles: can(u, 'manage_roles') || can(u, 'manage_permissions'),
+                tasks: true,
+                analytics: true,
+                profile: true
+            };
+            for (const [id, visible] of Object.entries(tabs)) {
+                const btn = document.getElementById('tab' + id.charAt(0).toUpperCase() + id.slice(1));
+                if (btn) btn.classList.toggle('hidden', !visible);
+            }
+            const taskActions = document.getElementById('taskActions');
+            if (taskActions) taskActions.style.display = can(u, 'create_task') ? 'flex' : 'none';
+        }
+
+        // ------------------------------ ГРАФИКИ ------------------------------
+        let rolesChartInstance, growthChartInstance;
+
+        function initCharts() {
+            const ctx1 = document.getElementById('rolesChart').getContext('2d');
+            const ctx2 = document.getElementById('growthChart').getContext('2d');
+            rolesChartInstance = new Chart(ctx1, {
+                type: 'bar',
+                data: { labels: [], datasets: [{ label: 'Сотрудников', data: [], backgroundColor: '#39c982',
+                        borderRadius: 4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, ticks: { color: '#9db3a7', font: { size: 10 } },
+                            grid: { color: '#20382b' } }, x: { ticks: { color: '#9db3a7', font: { size: 9 } } } } }
+            });
+            growthChartInstance = new Chart(ctx2, {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Новых', data: [], borderColor: '#2e9dff',
+                        backgroundColor: '#2e9dff22', fill: true, tension: 0.2, pointRadius: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, ticks: { color: '#9db3a7', font: { size: 10 } },
+                            grid: { color: '#20382b' } }, x: { ticks: { color: '#9db3a7', font: { size: 9 } } } } }
+            });
+            updateCharts();
+        }
+
+        function updateCharts() {
+            if (!rolesChartInstance) return;
+            const roleCounts = {};
+            users.forEach(u => { roleCounts[u.role] = (roleCounts[u.role] || 0) + 1; });
+            rolesChartInstance.data.labels = Object.keys(roleCounts);
+            rolesChartInstance.data.datasets[0].data = Object.values(roleCounts);
+            rolesChartInstance.update();
+            const months = {};
+            users.forEach(u => { if (u.join) { const m = u.join.slice(0, 7);
+                    months[m] = (months[m] || 0) + 1; } });
+            const sorted = Object.keys(months).sort();
+            growthChartInstance.data.labels = sorted.map(m => { const [y, mo] = m.split('-'); return mo + '.' + y.slice(2); });
+            growthChartInstance.data.datasets[0].data = sorted.map(m => months[m]);
+            growthChartInstance.update();
+
+            // Вторые графики
+            const chart2 = Chart.getChart('rolesChart2');
+            const chart3 = Chart.getChart('growthChart2');
+            if (chart2) { chart2.data.labels = Object.keys(roleCounts);
+                chart2.data.datasets[0].data = Object.values(roleCounts);
+                chart2.update(); }
+            if (chart3) { chart3.data.labels = sorted.map(m => { const [y, mo] = m.split('-'); return mo + '.' + y.slice(2); });
+                chart3.data.datasets[0].data = sorted.map(m => months[m]);
+                chart3.update(); }
+        }
+
+        // ------------------------------ АНАЛИТИКА (дашборд) ------------------------------
+        function renderAnalytics() {
+            const container = document.getElementById('analyticsContent');
+            if (!current()) return;
+            const user = current();
+            const myTasks = tasks.filter(t => t.assignee === user.id);
+            const openMy = myTasks.filter(t => t.status !== 'done');
+            const soonDeadline = tasks.filter(t => t.deadline && t.status !== 'done')
+                .sort((a, b) => new Date(a.deadline) - new Date(b.deadline)).slice(0, 5);
+            const onVacation = users.filter(u => u.onVacation && u.id !== user.id);
+            const newUsers = users.filter(u => u.join && new Date(u.join) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+                .slice(0, 5);
+
+            let html = `
+                <div class="widget-grid">
+                    <div class="widget"><h4>📋 Мои задачи</h4><div class="value">${myTasks.length}</div><span class="muted">из них открыто: ${openMy.length}</span></div>
+                    <div class="widget"><h4>⏳ Скоро дедлайн</h4>
+                        ${soonDeadline.length ? soonDeadline.map(t => `<div class="list-item">${esc(t.title)} — ${esc(t.deadline)}</div>`).join('') : '<span class="muted">Нет задач с дедлайном</span>'}
+                    </div>
+                    <div class="widget"><h4>🌴 В отпуске</h4>
+                        ${onVacation.length ? onVacation.map(u => `<div class="list-item">${esc(u.name)} (до ${esc(u.vacationTo||'не указано')})</div>`).join('') : '<span class="muted">Никого</span>'}
+                    </div>
+                    <div class="widget"><h4>🆕 Новые сотрудники (за 30 дней)</h4>
+                        ${newUsers.length ? newUsers.map(u => `<div class="list-item">${esc(u.name)} (с ${esc(u.join)})</div>`).join('') : '<span class="muted">Нет новичков</span>'}
+                    </div>
+                </div>
+            `;
+            container.innerHTML = html;
+        }
+
+        // ------------------------------ СОТРУДНИКИ ------------------------------
+        function toggleAdvancedFilters() { document.getElementById('advancedFilters').classList.toggle('hidden'); }
+
+        function getFilters() {
+            return {
+                search: document.getElementById('search').value.toLowerCase().trim(),
+                role: document.getElementById('roleFilter').value,
+                joinFrom: document.getElementById('filterJoinFrom').value,
+                joinTo: document.getElementById('filterJoinTo').value,
+                promFrom: document.getElementById('filterPromotionFrom').value,
+                promTo: document.getElementById('filterPromotionTo').value,
+                discord: document.getElementById('filterDiscord').value,
+                frozen: document.getElementById('filterFrozen').value
+            };
+        }
+
+        function filterUsers(list, filters) {
+            return list.filter(u => {
+                const text = [u.name, u.login, u.role, u.discord].join(' ').toLowerCase();
+                if (filters.search && !text.includes(filters.search)) return false;
+                if (filters.role && u.role !== filters.role) return false;
+                if (filters.joinFrom && u.join && u.join < filters.joinFrom) return false;
+                if (filters.joinTo && u.join && u.join > filters.joinTo) return false;
+                if (filters.promFrom && u.promotion && u.promotion < filters.promFrom) return false;
+                if (filters.promTo && u.promotion && u.promotion > filters.promTo) return false;
+                if (filters.discord === 'yes' && !u.discord) return false;
+                if (filters.discord === 'no' && u.discord) return false;
+                if (filters.frozen === 'active' && (isFrozen(u) || isOnVacation(u))) return false;
+                if (filters.frozen === 'frozen' && !isFrozen(u)) return false;
+                if (filters.frozen === 'vacation' && !isOnVacation(u)) return false;
+                return true;
+            });
+        }
+
+        function getAutoBadges(user) {
+            const badges = [];
+            const now = Date.now();
+            const joinDate = new Date(user.join);
+            const months = (now - joinDate) / (1000 * 60 * 60 * 24 * 30.44);
+            if (months >= 12) badges.push({ name: 'Ветеран (1 год)', icon: '🏅', class: 'badge-gold' });
+            else if (months >= 6) badges.push({ name: 'Опытный (6 мес)', icon: '🥈', class: 'badge-blue' });
+            else if (months >= 3) badges.push({ name: 'Новичок (3 мес)', icon: '🥉' });
+            const userTasks = tasks.filter(t => t.assignee === user.id);
+            if (userTasks.length >= 10) badges.push({ name: 'Трудоголик (10 задач)', icon: '📋', class: 'badge-gold' });
+            else if (userTasks.length >= 5) badges.push({ name: 'Активный (5 задач)', icon: '📝' });
+            if (user.role === 'Владелец') badges.push({ name: 'Основатель', icon: '👑', class: 'badge-gold' });
+            if (user.role === 'Разработчик') badges.push({ name: 'Код-мастер', icon: '💻', class: 'badge-blue' });
+            if (user.role === 'Главный администратор') badges.push({ name: 'Главный', icon: '⚡' });
+            if (user.notes && user.notes.trim()) badges.push({ name: 'Отмечен', icon: '📌' });
+            if (isFrozen(user)) badges.push({ name: 'Заморожен', icon: '❄️', class: 'badge-frozen' });
+            if (isOnVacation(user)) badges.push({ name: 'В отпуске', icon: '🌴', class: 'badge-vacation' });
+            return badges;
+        }
+
+        function getAllBadges(user) {
+            const auto = getAutoBadges(user);
+            const custom = user.customBadges || [];
+            return [...auto, ...custom];
+        }
+
+        function renderStaff() {
+            const u = current();
+            if (!can(u, 'view_staff')) {
+                document.getElementById('tbody').innerHTML =
+                    '<tr><td colspan="9" class="empty">У вас нет доступа к списку сотрудников</td></tr>';
+                document.querySelector('#sectionStaff .stats').classList.add('hidden');
+                document.querySelector('#sectionStaff .charts-compact').classList.add('hidden');
+                document.querySelector('#sectionStaff .card .toolbar').classList.add('hidden');
+                return;
+            } else {
+                document.querySelector('#sectionStaff .stats').classList.remove('hidden');
+                document.querySelector('#sectionStaff .charts-compact').classList.remove('hidden');
+                document.querySelector('#sectionStaff .card .toolbar').classList.remove('hidden');
+            }
+
+            const filters = getFilters();
+            const roleFilterEl = document.getElementById('roleFilter');
+            const currentRole = roleFilterEl.value;
+            roleFilterEl.innerHTML = '<option value="">Все должности</option>' + rolesList.map(r =>
+                `<option ${r===currentRole?'selected':''}>${r}</option>`).join('');
+            let list = filterUsers(users, filters);
+            list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+            document.getElementById('tbody').innerHTML = list.length ? list.map(u => {
+                const allBadges = getAllBadges(u);
+                const badgesHtml = allBadges.map(b =>
+                    `<span class="badge ${b.class||''}">${b.icon||'🏅'} ${b.name}</span>`).join(' ');
+                let statusHtml = '';
+                if (isFrozen(u)) {
+                    statusHtml = `<span class="badge badge-frozen" title="${esc(u.frozenReason||'')}${u.frozenUntil ? ' до ' + u.frozenUntil : ''}">❄️ Заморожен</span>`;
+                } else if (isOnVacation(u)) {
+                    statusHtml = `<span class="badge badge-vacation" title="${u.vacationFrom ? 'с ' + u.vacationFrom : ''}${u.vacationTo ? ' по ' + u.vacationTo : ''}">🌴 В отпуске</span>`;
+                } else {
+                    statusHtml = `<span class="badge badge-active">🟢 Активен</span>`;
+                }
+                return `<tr>
+                    <td><button class="btn" onclick="openProfileInTab('${u.id}')">${esc(u.name)}</button></td>
+                    <td>${esc(u.login)}</td>
+                    <td class="role ${roleClass(u.role)}">${esc(u.role)}</td>
+                    <td>${esc(u.join||'—')}</td><td>${esc(u.promotion||'—')}</td><td>${esc(u.discord||'—')}</td>
+                    <td>${badgesHtml}</td>
+                    <td>${statusHtml}</td>
+                    <td>${u.id===currentId?'<span class="badge">Вы</span>':''}</td>
+                </tr>`;
+            }).join('') : `<tr><td colspan="9" class="empty">Сотрудники не найдены.</td></tr>`;
+            document.getElementById('count').textContent = users.length;
+            document.getElementById('rolesCount').textContent = new Set(users.map(u => u.role)).size;
+            document.getElementById('withNotes').textContent = users.filter(u => u.notes && u.notes.trim()).length;
+            updateCharts();
+        }
+
+        // ------------------------------ ПРОФИЛЬ (все вкладки) ------------------------------
+        function openProfileInTab(userId) {
+            const user = current();
+            if (!can(user, 'view_staff') && userId !== user.id) {
+                toast('У вас нет прав на просмотр других профилей');
+                userId = user.id;
+            }
+            profileUserId = userId;
+            switchTab('profile');
+            renderProfileTab(userId);
+        }
+
+        function renderProfileTab(userId) {
+            const u = users.find(x => x.id === userId);
+            if (!u) {
+                document.getElementById('profileContainer').innerHTML = '<p class="muted">Сотрудник не найден</p>';
+                return;
+            }
+            const container = document.getElementById('profileContainer');
+            const tabBtn = document.getElementById('tabProfile');
+            tabBtn.textContent = '👤 ' + u.name;
+
+            const allBadges = getAllBadges(u);
+            const badgesHtml = allBadges.map(b =>
+                `<span class="badge ${b.class||''}">${b.icon||'🏅'} ${b.name}</span>`).join(' ');
+
+            let statusBlock = '';
+            if (isFrozen(u)) {
+                statusBlock =
+                    `<div style="margin-top:12px;background:#2a1a1a;border:1px solid #5a3039;border-radius:10px;padding:12px;">
+                        <b style="color:#ff8a8a;">❄️ Аккаунт заморожен</b>
+                        ${u.frozenReason ? `<p style="margin:4px 0 0;font-size:14px;color:var(--muted);">Причина: ${esc(u.frozenReason)}</p>` : ''}
+                        ${u.frozenUntil ? `<p style="margin:0;font-size:13px;color:var(--muted);">До: ${esc(u.frozenUntil)}</p>` : ''}
+                    </div>`;
+            } else if (isOnVacation(u)) {
+                statusBlock =
+                    `<div style="margin-top:12px;background:#3d3d1a;border:1px solid #5a5a2a;border-radius:10px;padding:12px;">
+                        <b style="color:#e5e35c;">🌴 В отпуске</b>
+                        ${u.vacationFrom ? `<p style="margin:4px 0 0;font-size:14px;color:var(--muted);">С: ${esc(u.vacationFrom)}</p>` : ''}
+                        ${u.vacationTo ? `<p style="margin:0;font-size:13px;color:var(--muted);">По: ${esc(u.vacationTo)}</p>` : ''}
+                    </div>`;
+            } else {
+                statusBlock = `<div style="margin-top:12px;color:var(--accent);">🟢 Активен</div>`;
+            }
+
+            let html = `
+                <div class="profile">
+                    <div class="big-avatar">${initials(u.name)}</div>
+                    <div>
+                        <div class="profile-name">${esc(u.name)}</div>
+                        <div class="badge">${esc(u.role)}</div>
+                        <p class="muted">@${esc(u.login)}</p>
+                        ${statusBlock}
+                    </div>
+                </div>
+                <div class="profile-tabs">
+                    <button class="active" onclick="switchProfileTabInProfile('info', '${u.id}')">📋 Общая</button>
+                    <button onclick="switchProfileTabInProfile('badges', '${u.id}')">🏅 Бейджи</button>
+                    <button onclick="switchProfileTabInProfile('notes', '${u.id}')">📝 Заметки</button>
+                    <button onclick="switchProfileTabInProfile('history', '${u.id}')">📜 История</button>
+                    <button onclick="switchProfileTabInProfile('security', '${u.id}')">🔐 Безопасность</button>
+                    <button onclick="switchProfileTabInProfile('notifications', '${u.id}')">🔔 Уведомления</button>
+                </div>
+                <div class="profile-tab-content" id="profileTabContent"></div>
+                <div class="modal-actions">
+                    ${can(current(),'edit_user') && u.id === currentId ? `<button class="btn primary2" onclick="openEditInTab('${u.id}')">✎ Изменить данные</button>` : ''}
+                    ${can(current(),'delete_user') && u.id!==currentId && can(current(),'view_staff') ? `<button class="btn danger" onclick="deleteEmployeeFromTab('${u.id}')">Удалить</button>` : ''}
+                    ${can(current(),'freeze_user') && u.id !== currentId && can(current(),'view_staff') ? (isFrozen(u) ? `<button class="btn" onclick="unfreezeUser('${u.id}')">🔓 Разморозить</button>` : `<button class="btn danger" onclick="openFreezeModal('${u.id}')">❄️ Заморозить</button>`) : ''}
+                    ${can(current(),'edit_user') && u.id !== currentId && can(current(),'view_staff') ? (isOnVacation(u) ? `<button class="btn" onclick="endVacation('${u.id}')">🔙 Вернуть из отпуска</button>` : `<button class="btn primary2" onclick="openVacationModal('${u.id}')">🌴 Отпуск</button>`) : ''}
+                    <button class="btn" onclick="switchTab('staff')">← Назад к списку</button>
+                </div>
+            `;
+            container.innerHTML = html;
+            switchProfileTabInProfile('info', userId);
+        }
+
+        function switchProfileTabInProfile(tab, userId) {
+            const u = users.find(x => x.id === userId);
+            if (!u) return;
+            const container = document.getElementById('profileTabContent');
+            const tabs = document.querySelectorAll('#profileContainer .profile-tabs button');
+            tabs.forEach(btn => btn.classList.remove('active'));
+            const targetBtn = Array.from(tabs).find(btn => btn.textContent.includes(
+                tab === 'info' ? 'Общая' : tab === 'badges' ? 'Бейджи' : tab === 'notes' ? 'Заметки' : tab === 'history' ?
+                'История' : tab === 'security' ? 'Безопасность' : 'Уведомления'
+            ));
+            if (targetBtn) targetBtn.classList.add('active');
+
+            let content = '';
+            if (tab === 'info') {
+                const allBadges = getAllBadges(u);
+                const badgesHtml = allBadges.map(b =>
+                    `<span class="badge ${b.class||''}">${b.icon||'🏅'} ${b.name}</span>`).join(' ');
+                content = `
+                    <div class="info">
+                        <div><small>В должности с</small><b>${esc(u.join||'—')}</b></div>
+                        <div><small>Последнее повышение</small><b>${esc(u.promotion||'Не было')}</b></div>
+                        <div><small>Discord</small>${esc(u.discord||'—')}</div>
+                        <div><small>Количество задач</small><b>${tasks.filter(t=>t.assignee===u.id).length}</b></div>
+                    </div>
+                    <div style="margin-top:12px;"><b>Бейджи:</b> ${badgesHtml || '—'}</div>
+                `;
+            } else if (tab === 'badges') {
+                const auto = getAutoBadges(u);
+                const custom = u.customBadges || [];
+                content = `
+                    <div><b>Автоматические бейджи:</b></div>
+                    <div class="badge-grid">${auto.map(b=>`<span class="badge ${b.class||''}">${b.icon||'🏅'} ${b.name}</span>`).join(' ') || '—'}</div>
+                    <div style="margin-top:16px;"><b>Ручные бейджи:</b></div>
+                    <div class="badge-grid">${custom.map(b=>`<span class="badge ${b.class||''}">${b.icon||'🏅'} ${b.name}</span>`).join(' ') || '—'}</div>
+                    ${can(current(),'edit_user') ? `
+                        <div style="margin-top:16px;">
+                            <button class="btn primary2" onclick="openBadgeManagerInTab('${u.id}')">🏅 Управление бейджами</button>
+                        </div>
+                    ` : ''}
+                `;
+            } else if (tab === 'notes') {
+                content = `
+                    <div class="notes-section">
+                        <label style="display:block;font-size:13px;color:#b7c9be;margin-bottom:4px;">Заметки о сотруднике</label>
+                        <textarea id="profileNotes" rows="4" ${!can(current(),'edit_notes')?'disabled':''}>${esc(u.notes||'')}</textarea>
+                        ${can(current(),'edit_notes') ? `<div class="modal-actions" style="margin-top:6px;"><button class="btn small primary2" onclick="saveNotesFromTab('${u.id}')">Сохранить заметки</button></div>` : ''}
+                    </div>
+                `;
+            } else if (tab === 'history') {
+                const history = u.history || [];
+                content = `
+                    <div><b>История изменений</b></div>
+                    ${history.length ? `<table><thead><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Детали</th></tr></thead><tbody>
+                        ${history.slice().reverse().map(h => `<tr><td>${new Date(h.timestamp).toLocaleString()}</td><td>${esc(h.by)}</td><td>${esc(h.action)}</td><td>${esc(h.details||'')}</td></tr>`).join('')}
+                    </tbody></table>` : '<p class="muted">История пуста</p>'}
+                `;
+            } else if (tab === 'security') {
+                const isOwn = u.id === currentId;
+                const enabled = u.totpEnabled;
+                const secret = u.totpSecret;
+                content = `
+                    <div><b>Двухфакторная аутентификация (TOTP)</b></div>
+                    ${isOwn ? `
+                        ${enabled ? `<p class="muted">✅ 2FA включена</p>` : `<p class="muted">2FA отключена</p>`}
+                        ${enabled ? `<button class="btn danger" onclick="disable2FA('${u.id}')">Отключить 2FA</button>` : `<button class="btn primary2" onclick="enable2FA('${u.id}')">Включить 2FA</button>`}
+                        ${secret && !enabled ? `<div style="margin-top:12px;"><p class="muted">Секрет: <code>${secret}</code></p><p>Отсканируйте QR-код или введите секрет в приложение (Google Authenticator и др.)</p>
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=otpauth://totp/TeamProject:${u.login}?secret=${secret}&issuer=TeamProject" class="qr-img" alt="QR">
+                            <div class="field"><label>Введите код для подтверждения</label><input id="totpVerifyCode" placeholder="6 цифр"></div>
+                            <button class="btn primary2" onclick="confirm2FA('${u.id}')">Подтвердить и включить</button>
+                            <div id="totpError" class="error"></div>
+                        </div>` : ''}
+                    ` : `<p class="muted">Только владелец профиля может управлять 2FA</p>`}
+                `;
+            } else if (tab === 'notifications') {
+                const settings = u.notificationSettings || { tasks: true, status: true, freeze: true, vacation: true };
+                content = `
+                    <div><b>Настройки уведомлений</b></div>
+                    <div style="margin-top:12px;">
+                        <label><input type="checkbox" ${settings.tasks?'checked':''} onchange="saveNotifSetting('${u.id}','tasks',this.checked)"> Новые задачи</label><br>
+                        <label><input type="checkbox" ${settings.status?'checked':''} onchange="saveNotifSetting('${u.id}','status',this.checked)"> Изменение статуса задач</label><br>
+                        <label><input type="checkbox" ${settings.freeze?'checked':''} onchange="saveNotifSetting('${u.id}','freeze',this.checked)"> Заморозка / разморозка</label><br>
+                        <label><input type="checkbox" ${settings.vacation?'checked':''} onchange="saveNotifSetting('${u.id}','vacation',this.checked)"> Отпуск</label><br>
+                    </div>
+                    <p class="muted">Уведомления отображаются в виде всплывающих сообщений и в колокольчике.</p>
+                `;
+            }
+            container.innerHTML = content;
+        }
+
+        // ------------------------------ 2FA ------------------------------
+        function enable2FA(userId) {
+            const u = users.find(x => x.id === userId);
+            if (!u || u.id !== currentId) return toast('Недостаточно прав');
+            if (u.totpEnabled) return toast('Уже включена');
+            const secret = generateSecret();
+            u.totpSecret = secret;
+            u.totpEnabled = false;
+            saveUsers();
+            renderProfileTab(userId);
+            switchProfileTabInProfile('security', userId);
+            toast('Секрет сгенерирован, подтвердите код');
+        }
+
+        function confirm2FA(userId) {
+            const u = users.find(x => x.id === userId);
+            if (!u || u.id !== currentId) return toast('Недостаточно прав');
+            const code = document.getElementById('totpVerifyCode').value.trim();
+            if (!code) { document.getElementById('totpError').textContent = 'Введите код'; return; }
+            const secret = u.totpSecret;
+            if (!secret) { document.getElementById('totpError').textContent = 'Секрет не найден'; return; }
+            if (totp(secret) !== code) { document.getElementById('totpError').textContent = 'Неверный код'; return; }
+            u.totpEnabled = true;
+            saveUsers();
+            addLog('Включена 2FA для ' + u.name);
+            addHistoryEntry(userId, 'Включена 2FA');
+            toast('2FA успешно включена');
+            renderProfileTab(userId);
+        }
+
+        function disable2FA(userId) {
+            const u = users.find(x => x.id === userId);
+            if (!u || u.id !== currentId) return toast('Недостаточно прав');
+            if (!u.totpEnabled) return toast('Уже отключена');
+            if (!confirm('Отключить 2FA?')) return;
+            u.totpEnabled = false;
+            u.totpSecret = '';
+            saveUsers();
+            addLog('Отключена 2FA для ' + u.name);
+            addHistoryEntry(userId, 'Отключена 2FA');
+            toast('2FA отключена');
+            renderProfileTab(userId);
+        }
+
+        function saveNotifSetting(userId, key, val) {
+            const u = users.find(x => x.id === userId);
+            if (!u || u.id !== currentId) return toast('Недостаточно прав');
+            if (!u.notificationSettings) u.notificationSettings = {};
+            u.notificationSettings[key] = val;
+            saveUsers();
+            toast('Настройка сохранена');
+        }
+
+        // ------------------------------ ЗАМОРОЗКА / ОТПУСК (с историей) ------------------------------
+        function openFreezeModal(userId) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'freeze_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === userId);
+            if (!u || u.id === currentId) return toast('Нельзя заморозить себя');
+            if (isFrozen(u)) return toast('Уже заморожен');
+            document.getElementById('modalContent').innerHTML = `
+                <h2>❄️ Заморозка сотрудника</h2>
+                <p class="muted">Сотрудник <b>${esc(u.name)}</b> будет временно отстранён.</p>
+                <div class="field"><label>Причина</label><textarea id="freezeReason" rows="2" placeholder="Например: нарушение правил..."></textarea></div>
+                <div class="field"><label>Дата разморозки (опционально)</label><input id="freezeUntil" type="date"></div>
+                <div id="freezeError" class="error"></div>
+                <div class="modal-actions">
+                    <button class="btn" onclick="closeModal()">Отмена</button>
+                    <button class="btn danger" onclick="confirmFreeze('${userId}')">❄️ Заморозить</button>
+                </div>
+            `;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function confirmFreeze(userId) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'freeze_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === userId);
+            if (!u) return;
+            const reason = document.getElementById('freezeReason').value.trim();
+            const until = document.getElementById('freezeUntil').value;
+            if (!reason) { document.getElementById('freezeError').textContent = 'Укажите причину'; return; }
+            u.frozen = true;
+            u.frozenReason = reason;
+            u.frozenUntil = until || '';
+            saveUsers();
+            addLog('Заморожен: ' + u.name);
+            addHistoryEntry(userId, 'Заморожен', 'Причина: ' + reason + (until ? ', до ' + until : ''));
+            addNotification(u.id, `❄️ Ваш аккаунт заморожен. Причина: ${reason}${until ? ' до ' + until : ''}`);
+            closeModal();
+            toast('❄️ ' + u.name + ' заморожен');
+            renderStaff();
+            if (profileUserId === userId) renderProfileTab(userId);
+        }
+
+        function unfreezeUser(userId) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'freeze_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === userId);
+            if (!u || !isFrozen(u)) return toast('Не заморожен');
+            if (!confirm(`Разморозить ${u.name}?`)) return;
+            u.frozen = false;
+            u.frozenReason = '';
+            u.frozenUntil = '';
+            saveUsers();
+            addLog('Разморожен: ' + u.name);
+            addHistoryEntry(userId, 'Разморожен');
+            addNotification(u.id, '🔓 Ваш аккаунт разморожен');
+            toast('🔓 ' + u.name + ' разморожен');
+            renderStaff();
+            if (profileUserId === userId) renderProfileTab(userId);
+        }
+
+        function openVacationModal(userId) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === userId);
+            if (!u || u.id === currentId) return toast('Нельзя отправить себя');
+            if (isOnVacation(u)) return toast('Уже в отпуске');
+            document.getElementById('modalContent').innerHTML = `
+                <h2>🌴 Отправить в отпуск</h2>
+                <p class="muted">Сотрудник <b>${esc(u.name)}</b> будет временно отстранён.</p>
+                <div class="field"><label>Дата начала</label><input id="vacationFrom" type="date"></div>
+                <div class="field"><label>Дата окончания</label><input id="vacationTo" type="date"></div>
+                <div id="vacationError" class="error"></div>
+                <div class="modal-actions">
+                    <button class="btn" onclick="closeModal()">Отмена</button>
+                    <button class="btn primary2" onclick="confirmVacation('${userId}')">🌴 Установить отпуск</button>
+                </div>
+            `;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function confirmVacation(userId) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === userId);
+            if (!u) return;
+            const from = document.getElementById('vacationFrom').value;
+            const to = document.getElementById('vacationTo').value;
+            if (!from) { document.getElementById('vacationError').textContent = 'Укажите дату начала'; return; }
+            u.onVacation = true;
+            u.vacationFrom = from;
+            u.vacationTo = to || '';
+            saveUsers();
+            addLog('Отпуск: ' + u.name);
+            addHistoryEntry(userId, 'Установлен отпуск', (from ? 'с ' + from : '') + (to ? ' по ' + to : ''));
+            addNotification(u.id, `🌴 Вы отправлены в отпуск${from ? ' с ' + from : ''}${to ? ' по ' + to : ''}`);
+            closeModal();
+            toast('🌴 ' + u.name + ' в отпуске');
+            renderStaff();
+            if (profileUserId === userId) renderProfileTab(userId);
+        }
+
+        function endVacation(userId) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === userId);
+            if (!u || !isOnVacation(u)) return toast('Не в отпуске');
+            if (!confirm(`Вернуть ${u.name} из отпуска?`)) return;
+            u.onVacation = false;
+            u.vacationFrom = '';
+            u.vacationTo = '';
+            saveUsers();
+            addLog('Возврат из отпуска: ' + u.name);
+            addHistoryEntry(userId, 'Возврат из отпуска');
+            addNotification(u.id, '🔙 Вы возвращены из отпуска');
+            toast('🔙 ' + u.name + ' вернулся');
+            renderStaff();
+            if (profileUserId === userId) renderProfileTab(userId);
+        }
+
+        // ------------------------------ ОСТАЛЬНЫЕ ФУНКЦИИ (с историей) ------------------------------
+        function saveNotesFromTab(id) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_notes')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === id);
+            if (!u) return;
+            const old = u.notes;
+            u.notes = document.getElementById('profileNotes').value.trim();
+            saveUsers();
+            addLog('Обновлены заметки для ' + u.name);
+            if (old !== u.notes) addHistoryEntry(id, 'Изменены заметки', old ? 'было: ' + old : '');
+            toast('Заметки сохранены');
+            renderProfileTab(id);
+            renderStaff();
+        }
+
+        function openEditInTab(id) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_user')) { toast('Нет прав'); return; }
+            openEdit(id);
+        }
+
+        function openEdit(id) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === id);
+            if (!u) return;
+            document.getElementById('modalContent').innerHTML = `
+                <h2>Редактировать сотрудника</h2>
+                <div class="grid">
+                    <div class="field"><label>Имя</label><input id="eName" value="${esc(u.name)}"></div>
+                    <div class="field"><label>Логин</label><input id="eLogin" value="${esc(u.login)}"></div>
+                    <div class="field"><label>Новый пароль</label><input id="ePass" type="password" placeholder="Оставьте пустым"></div>
+                    <div class="field"><label>Должность</label><select id="eRole">${rolesList.map(r=>`<option ${r===u.role?'selected':''}>${r}</option>`).join('')}</select></div>
+                    <div class="field"><label>Дата вступления</label><input id="eJoin" type="date" value="${esc(u.join||'')}"></div>
+                    <div class="field"><label>Дата повышения</label><input id="ePromotion" type="date" value="${esc(u.promotion||'')}"></div>
+                    <div class="field"><label>Discord</label><input id="eDiscord" value="${esc(u.discord||'')}"></div>
+                </div>
+                <div class="field"><label>Заметки</label><textarea id="eNotes" rows="3">${esc(u.notes||'')}</textarea></div>
+                <div id="editError" class="error"></div>
+                <div class="modal-actions">
+                    <button class="btn" onclick="closeModal()">Отмена</button>
+                    <button class="btn primary2" onclick="saveEmployeeEditFromTab('${u.id}')">Сохранить изменения</button>
+                </div>
+            `;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        async function saveEmployeeEditFromTab(id) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'edit_user')) { toast('Нет прав'); return; }
+            const u = users.find(x => x.id === id);
+            if (!u) return;
+            const error = document.getElementById('editError');
+            const name = document.getElementById('eName').value.trim(),
+                login = document.getElementById('eLogin').value.trim();
+            const pass = document.getElementById('ePass').value;
+            if (!name || !login) { error.textContent = 'Имя и логин обязательны'; return; }
+            const duplicate = users.find(x => x.id !== id && x.login.toLowerCase() === login.toLowerCase());
+            if (duplicate) { error.textContent = 'Логин уже используется'; return; }
+            let changes = [];
+            if (u.name !== name) changes.push('имя: ' + u.name + ' → ' + name);
+            if (u.login !== login) changes.push('логин: ' + u.login + ' → ' + login);
+            if (u.role !== document.getElementById('eRole').value) changes.push('роль: ' + u.role + ' → ' + document
+                .getElementById('eRole').value);
+            if (u.join !== document.getElementById('eJoin').value) changes.push('дата вступления');
+            if (u.promotion !== document.getElementById('ePromotion').value) changes.push('дата повышения');
+            if (u.discord !== document.getElementById('eDiscord').value.trim()) changes.push('Discord');
+            if (u.notes !== document.getElementById('eNotes').value.trim()) changes.push('заметки');
+
+            u.name = name;
+            u.login = login;
+            u.role = document.getElementById('eRole').value;
+            u.join = document.getElementById('eJoin').value;
+            u.promotion = document.getElementById('ePromotion').value;
+            u.discord = document.getElementById('eDiscord').value.trim();
+            u.notes = document.getElementById('eNotes').value.trim();
+            if (pass) { if (pass.length < 6) { error.textContent = 'Пароль минимум 6'; return; }
+                u.password = await hashPassword(pass);
+                changes.push('пароль изменён'); }
+            saveUsers();
+            addLog('Изменён профиль: ' + u.name);
+            if (changes.length) addHistoryEntry(id, 'Изменены данные', changes.join('; '));
+            closeModal();
+            if (!document.getElementById('sectionProfile').classList.contains('hidden')) renderProfileTab(id);
+            renderStaff();
+            toast('Сохранено');
+        }
+
+        function deleteEmployeeFromTab(id) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'delete_user') || id === currentId) return;
+            const u = users.find(x => x.id === id);
+            if (!u) return;
+            if (!confirm(`Удалить ${u.name}?`)) return;
+            addHistoryEntry(id, 'Удалён', 'Пользователь удалён');
+            users = users.filter(x => x.id !== id);
+            saveUsers();
+            addLog('Удалён сотрудник: ' + u.name);
+            switchTab('staff');
+            renderStaff();
+            toast('Удалён');
+        }
+
+        function openCreate() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'create_user')) { toast('Нет прав'); return; }
+            document.getElementById('modalContent').innerHTML = `
+                <h2>Создать сотрудника</h2>
+                <div class="grid">
+                    <div class="field"><label>Имя</label><input id="fName"></div>
+                    <div class="field"><label>Логин</label><input id="fLogin"></div>
+                    <div class="field"><label>Пароль</label><input id="fPass" type="password" minlength="6"></div>
+                    <div class="field"><label>Должность</label><select id="fRole">${rolesList.map(r=>`<option>${r}</option>`).join('')}</select></div>
+                    <div class="field"><label>Дата вступления</label><input id="fJoin" type="date" value="${dateNow()}"></div>
+                    <div class="field"><label>Дата повышения</label><input id="fPromotion" type="date"></div>
+                    <div class="field"><label>Discord</label><input id="fDiscord" placeholder="@nickname"></div>
+                </div>
+                <div class="field"><label>Заметки</label><textarea id="fNotes" rows="3"></textarea></div>
+                <div id="formError" class="error"></div>
+                <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary2" onclick="createEmployee()">Создать</button></div>
+            `;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        async function createEmployee() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'create_user')) return;
+            const error = document.getElementById('formError');
+            const name = document.getElementById('fName').value.trim(),
+                login = document.getElementById('fLogin').value.trim(),
+                pass = document.getElementById('fPass').value;
+            if (!name || !login || pass.length < 6) { error.textContent = 'Заполните имя, логин и пароль (мин 6)'; return; }
+            if (users.some(u => u.login.toLowerCase() === login.toLowerCase())) { error.textContent = 'Логин уже существует'; return; }
+            const newUser = {
+                id: uid(),
+                name,
+                login,
+                password: await hashPassword(pass),
+                role: document.getElementById('fRole').value,
+                join: document.getElementById('fJoin').value,
+                promotion: document.getElementById('fPromotion').value,
+                discord: document.getElementById('fDiscord').value.trim(),
+                notes: document.getElementById('fNotes').value.trim(),
+                customBadges: [],
+                createdAt: Date.now(),
+                customColors: { ...THEMES.dark },
+                frozen: false,
+                frozenReason: '',
+                frozenUntil: '',
+                onVacation: false,
+                vacationFrom: '',
+                vacationTo: '',
+                history: [],
+                totpSecret: '',
+                totpEnabled: false,
+                notificationSettings: { tasks: true, status: true, freeze: true, vacation: true }
+            };
+            users.push(newUser);
+            saveUsers();
+            addLog('Создан сотрудник: ' + name);
+            addHistoryEntry(newUser.id, 'Создан', 'Добавлен в систему');
+            closeModal();
+            renderStaff();
+            toast('Создано');
+        }
+
+        // ------------------------------ ЗАДАЧИ (без изменений, но с уведомлениями) ------------------------------
+        function renderTasks() {
+            if (!current()) return;
+            const q = document.getElementById('taskSearch').value.toLowerCase().trim();
+            const status = document.getElementById('taskStatusFilter').value;
+            const assignee = document.getElementById('taskAssigneeFilter').value;
+            const assigneeFilter = document.getElementById('taskAssigneeFilter');
+            const curVal = assigneeFilter.value;
+            assigneeFilter.innerHTML = '<option value="">Все исполнители</option>' + users.map(u =>
+                `<option value="${u.id}" ${u.id===curVal?'selected':''}>${esc(u.name)}</option>`).join('');
+
+            const user = current();
+            let list = tasks.filter(t => {
+                if (q && !t.title.toLowerCase().includes(q) && !t.assigneeName.toLowerCase().includes(q)) return false;
+                if (status && t.status !== status) return false;
+                if (assignee && t.assignee !== assignee) return false;
+                if (!can(user, 'view_all_tasks') && t.assignee !== user.id) return false;
+                return true;
+            });
+
+            document.getElementById('taskTbody').innerHTML = list.length ? list.map(t => {
+                const isOwn = t.assignee === user.id;
+                const canEdit = can(user, 'edit_task') && (can(user, 'view_all_tasks') || isOwn);
+                const canDelete = can(user, 'delete_task') && (can(user, 'view_all_tasks') || isOwn);
+                const canChangeStatus = (can(user, 'assign_task') || isOwn);
+                return `
+                    <tr>
+                        <td>${esc(t.title)}</td>
+                        <td>${esc(t.assigneeName)}</td>
+                        <td>${esc(t.deadline||'—')}</td>
+                        <td><span class="badge ${t.status==='done'?'badge-gold':t.status==='in_progress'?'badge-blue':''}">${esc(t.status)}</span></td>
+                        <td>${esc(t.priority||'средний')}</td>
+                        <td>
+                            ${canEdit ? `<button class="btn small" onclick="openTaskEdit('${t.id}')">✎</button>` : ''}
+                            ${canDelete ? `<button class="btn small danger" onclick="deleteTask('${t.id}')">✕</button>` : ''}
+                            ${canChangeStatus ? `<button class="btn small" onclick="changeTaskStatus('${t.id}')">↻</button>` : ''}
+                        </td>
+                    </tr>
+                `;
+            }).join('') : `<tr><td colspan="6" class="empty">Задач нет</td></tr>`;
+        }
+
+        function openTaskCreate() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'create_task')) { toast('Нет прав'); return; }
+            const user = current();
+            const canAssign = can(user, 'assign_task');
+            document.getElementById('modalContent').innerHTML = `
+                <h2>Новая задача</h2>
+                <div class="field"><label>Название</label><input id="taskTitle"></div>
+                <div class="field"><label>Исполнитель</label>
+                    <select id="taskAssignee" ${!canAssign ? 'disabled' : ''}>
+                        ${users.map(u=>`<option value="${u.id}" ${u.id===user.id?'selected':''}>${esc(u.name)}</option>`).join('')}
+                    </select>
+                    ${!canAssign ? '<span class="muted" style="display:block;font-size:12px;">Вы не можете назначать задачи другим, будет назначен вы.</span>' : ''}
+                </div>
+                <div class="field"><label>Дедлайн</label><input id="taskDeadline" type="date"></div>
+                <div class="field"><label>Приоритет</label><select id="taskPriority"><option>низкий</option><option selected>средний</option><option>высокий</option></select></div>
+                <div id="taskError" class="error"></div>
+                <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary2" onclick="createTask()">Создать</button></div>
+            `;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function createTask() {
+            if (!checkBlocked()) return;
+            const title = document.getElementById('taskTitle').value.trim();
+            let assignee = document.getElementById('taskAssignee').value;
+            if (!can(current(), 'assign_task')) assignee = currentId;
+            const deadline = document.getElementById('taskDeadline').value;
+            const priority = document.getElementById('taskPriority').value;
+            if (!title) { document.getElementById('taskError').textContent = 'Введите название'; return; }
+            const assigneeUser = users.find(u => u.id === assignee);
+            tasks.push({ id: uid(), title, assignee, assigneeName: assigneeUser ? assigneeUser.name : '?', deadline,
+                priority, status: 'open', createdAt: Date.now() });
+            saveTasks();
+            addLog('Создана задача: ' + title);
+            if (assigneeUser) addNotification(assigneeUser.id, `📋 Вам назначена задача: "${title}"`);
+            closeModal();
+            renderTasks();
+            renderAnalytics();
+            toast('Задача создана');
+        }
+
+        function openTaskEdit(id) {
+            if (!checkBlocked()) return;
+            const t = tasks.find(x => x.id === id);
+            if (!t) return;
+            const user = current();
+            const canEdit = can(user, 'edit_task') && (can(user, 'view_all_tasks') || t.assignee === user.id);
+            if (!canEdit) { toast('Нет прав на редактирование этой задачи'); return; }
+            const canAssign = can(user, 'assign_task');
+            document.getElementById('modalContent').innerHTML = `
+                <h2>Редактировать задачу</h2>
+                <div class="field"><label>Название</label><input id="taskTitleE" value="${esc(t.title)}"></div>
+                <div class="field"><label>Исполнитель</label>
+                    <select id="taskAssigneeE" ${!canAssign ? 'disabled' : ''}>
+                        ${users.map(u=>`<option value="${u.id}" ${u.id===t.assignee?'selected':''}>${esc(u.name)}</option>`).join('')}
+                    </select>
+                    ${!canAssign ? '<span class="muted" style="display:block;font-size:12px;">Вы не можете менять исполнителя.</span>' : ''}
+                </div>
+                <div class="field"><label>Дедлайн</label><input id="taskDeadlineE" type="date" value="${esc(t.deadline||'')}"></div>
+                <div class="field"><label>Приоритет</label><select id="taskPriorityE"><option ${t.priority==='низкий'?'selected':''}>низкий</option><option ${t.priority==='средний'?'selected':''}>средний</option><option ${t.priority==='высокий'?'selected':''}>высокий</option></select></div>
+                <div class="field"><label>Статус</label><select id="taskStatusE"><option ${t.status==='open'?'selected':''}>open</option><option ${t.status==='in_progress'?'selected':''}>in_progress</option><option ${t.status==='done'?'selected':''}>done</option></select></div>
+                <div id="taskErrorE" class="error"></div>
+                <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary2" onclick="saveTaskEdit('${t.id}')">Сохранить</button></div>
+            `;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function saveTaskEdit(id) {
+            if (!checkBlocked()) return;
+            const t = tasks.find(x => x.id === id);
+            if (!t) return;
+            const title = document.getElementById('taskTitleE').value.trim();
+            if (!title) { document.getElementById('taskErrorE').textContent = 'Введите название'; return; }
+            const user = current();
+            let assignee = document.getElementById('taskAssigneeE').value;
+            if (!can(user, 'assign_task')) assignee = user.id;
+            const oldAssignee = t.assignee;
+            const assigneeUser = users.find(u => u.id === assignee);
+            t.title = title;
+            t.assignee = assignee;
+            t.assigneeName = assigneeUser ? assigneeUser.name : '?';
+            t.deadline = document.getElementById('taskDeadlineE').value;
+            t.priority = document.getElementById('taskPriorityE').value;
+            const newStatus = document.getElementById('taskStatusE').value;
+            if (newStatus !== t.status) {
+                t.status = newStatus;
+                if (assigneeUser) addNotification(assigneeUser.id, `📋 Статус задачи "${title}" изменён на ${newStatus}`);
+            }
+            saveTasks();
+            addLog('Изменена задача: ' + t.title);
+            if (oldAssignee !== assignee && assigneeUser) addNotification(assigneeUser.id, `📋 Вам назначена задача: "${title}"`);
+            closeModal();
+            renderTasks();
+            renderAnalytics();
+            toast('Сохранено');
+        }
+
+        function deleteTask(id) {
+            if (!checkBlocked()) return;
+            const t = tasks.find(x => x.id === id);
+            if (!t) return;
+            const user = current();
+            if (!can(user, 'delete_task') || (!can(user, 'view_all_tasks') && t.assignee !== user.id)) {
+                toast('Нет прав на удаление этой задачи');
+                return;
+            }
+            if (!confirm('Удалить задачу?')) return;
+            tasks = tasks.filter(t => t.id !== id);
+            saveTasks();
+            addLog('Удалена задача');
+            renderTasks();
+            renderAnalytics();
+            toast('Удалено');
+        }
+
+        function changeTaskStatus(id) {
+            if (!checkBlocked()) return;
+            const t = tasks.find(x => x.id === id);
+            if (!t) return;
+            const user = current();
+            if (t.assignee !== user.id && !can(user, 'assign_task')) {
+                toast('Нет прав на изменение статуса этой задачи');
+                return;
+            }
+            const statuses = ['open', 'in_progress', 'done'];
+            let idx = statuses.indexOf(t.status);
+            t.status = statuses[(idx + 1) % statuses.length];
+            saveTasks();
+            addLog('Изменён статус задачи: ' + t.title);
+            const assigneeUser = users.find(u => u.id === t.assignee);
+            if (assigneeUser) addNotification(assigneeUser.id, `📋 Статус задачи "${t.title}" изменён на ${t.status}`);
+            renderTasks();
+            renderAnalytics();
+            toast('Статус изменён');
+        }
+
+        // ------------------------------ ЛОГИ ------------------------------
+        function renderLogs() {
+            if (!current() || !can(current(), 'view_logs')) {
+                document.getElementById('logTbody').innerHTML = '<tr><td colspan="3" class="empty">Нет прав</td></tr>';
+                return;
+            }
+            const q = document.getElementById('logSearch').value.toLowerCase().trim();
+            let list = logs.filter(l => l.action.toLowerCase().includes(q) || l.user.toLowerCase().includes(q));
+            list.reverse();
+            document.getElementById('logTbody').innerHTML = list.length ? list.map(l => `
+                    <tr><td>${new Date(l.time).toLocaleString()}</td><td>${esc(l.user)} (${esc(l.role)})</td><td>${esc(l.action)}</td></tr>
+                `).join('') : `<tr><td colspan="3" class="empty">Логов нет</td></tr>`;
+        }
+
+        function clearLogs() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'clear_logs')) { toast('Нет прав'); return; }
+            if (!confirm('Очистить все логи?')) return;
+            logs = [];
+            saveLogs();
+            renderLogs();
+            toast('Логи очищены');
+        }
+
+        // ------------------------------ ПРАВА И РОЛИ ------------------------------
+        function renderRolePermissions() {
+            if (!current() || !can(current(), 'manage_permissions')) {
+                document.getElementById('rolesPermissionsContainer').innerHTML = '<p class="muted">Нет прав на управление правами</p>';
+                return;
+            }
+            let html = '';
+            for (const role of rolesList) {
+                const perms = rolePermissions[role] || [];
+                html += `<div style="margin:12px 0;border-bottom:1px solid var(--line);padding:8px 0;">
+                    <b style="font-size:16px;">${esc(role)}</b>
+                    <div style="margin-top:6px;">`;
+                for (const [category, permList] of Object.entries(PERM_CATEGORIES)) {
+                    html += `<div class="perm-category"><b>${category}</b><div class="permission-grid">`;
+                    for (const p of permList) {
+                        const checked = perms.includes(p) ? 'checked' : '';
+                        const label = PERM_LABELS[p] || p;
+                        html +=
+                            `<label class="perm-item"><input type="checkbox" ${checked} onchange="updateRolePerm('${role}','${p}',this.checked)"> ${label}</label>`;
+                    }
+                    html += `</div></div>`;
+                }
+                html += `</div></div>`;
+            }
+            document.getElementById('rolesPermissionsContainer').innerHTML = html;
+        }
+
+        function updateRolePerm(role, perm, val) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'manage_permissions')) return;
+            if (!rolePermissions[role]) rolePermissions[role] = [];
+            if (val && !rolePermissions[role].includes(perm)) rolePermissions[role].push(perm);
+            else if (!val) rolePermissions[role] = rolePermissions[role].filter(p => p !== perm);
+        }
+
+        function saveRolePermissions() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'manage_permissions')) { toast('Нет прав'); return; }
+            saveRolePermissions();
+            addLog('Изменены права ролей');
+            toast('Права сохранены');
+            renderRolePermissions();
+        }
+
+        // ------------------------------ ШАБЛОНЫ ------------------------------
+        function openTemplateEditor() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'manage_templates')) { toast('Нет прав'); return; }
+            let html = `<h2>Шаблоны ролей</h2><p class="muted">Редактируйте наборы прав для быстрого создания сотрудников.</p>`;
+            for (const [name, perms] of Object.entries(templates)) {
+                html += `<div style="margin:10px 0;border:1px solid var(--line);padding:10px;border-radius:10px;">
+                    <b>${esc(name)}</b>
+                    <div class="permission-grid">`;
+                for (const p of ALL_PERMISSIONS) {
+                    const checked = perms.includes(p) ? 'checked' : '';
+                    const label = PERM_LABELS[p] || p;
+                    html +=
+                        `<label class="perm-item"><input type="checkbox" ${checked} onchange="updateTemplate('${name}','${p}',this.checked)"> ${label}</label>`;
+                }
+                html += `</div><button class="btn danger small" onclick="deleteTemplate('${name}')">Удалить шаблон</button></div>`;
+            }
+            html += `<div class="field"><label>Название нового шаблона</label><input id="newTemplateName"></div>
+                <button class="btn primary2" onclick="addTemplate()">➕ Добавить шаблон</button>
+                <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
+            document.getElementById('modalContent').innerHTML = html;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function updateTemplate(name, perm, val) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'manage_templates')) return;
+            if (!templates[name]) templates[name] = [];
+            if (val && !templates[name].includes(perm)) templates[name].push(perm);
+            else if (!val) templates[name] = templates[name].filter(p => p !== perm);
+            saveTemplates();
+        }
+
+        function addTemplate() {
+            if (!checkBlocked()) return;
+            const name = document.getElementById('newTemplateName').value.trim();
+            if (!name || templates[name]) { toast('Некорректное имя'); return; }
+            templates[name] = ['view_staff', 'view_tasks'];
+            saveTemplates();
+            addLog('Создан шаблон: ' + name);
+            openTemplateEditor();
+            toast('Шаблон добавлен');
+        }
+
+        function deleteTemplate(name) {
+            if (!checkBlocked()) return;
+            if (!confirm('Удалить шаблон?')) return;
+            delete templates[name];
+            saveTemplates();
+            addLog('Удалён шаблон: ' + name);
+            openTemplateEditor();
+            toast('Удалено');
+        }
+
+        // ------------------------------ ИМПОРТ / ЭКСПОРТ ------------------------------
+        function exportJSON() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'export_data')) { toast('Нет прав'); return; }
+            const data = { users, tasks, logs, rolePermissions, templates, version: '1.0' };
+            const json = JSON.stringify(data, null, 2);
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+            a.download = 'backup_' + new Date().toISOString().slice(0,10) + '.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+            toast('Экспорт JSON готов');
+        }
+
+        function importJSON(event) {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'export_data')) { toast('Нет прав'); return; }
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!data.users || !data.tasks || !data.logs || !data.rolePermissions || !data.templates) {
+                        throw new Error('Неверный формат файла');
+                    }
+                    if (!confirm('Импорт полностью заменит текущие данные. Продолжить?')) return;
+                    users = data.users;
+                    tasks = data.tasks;
+                    logs = data.logs;
+                    rolePermissions = data.rolePermissions;
+                    templates = data.templates;
+                    users.forEach(u => {
+                        if (u.frozen === undefined) u.frozen = false;
+                        if (u.frozenReason === undefined) u.frozenReason = '';
+                        if (u.frozenUntil === undefined) u.frozenUntil = '';
+                        if (u.onVacation === undefined) u.onVacation = false;
+                        if (u.vacationFrom === undefined) u.vacationFrom = '';
+                        if (u.vacationTo === undefined) u.vacationTo = '';
+                        if (!u.history) u.history = [];
+                        if (!u.totpSecret) u.totpSecret = '';
+                        if (u.totpEnabled === undefined) u.totpEnabled = false;
+                        if (!u.notificationSettings) u.notificationSettings = { tasks: true, status: true,
+                            freeze: true, vacation: true };
+                    });
+                    saveUsers();
+                    saveTasks();
+                    saveLogs();
+                    saveRolePermissions();
+                    saveTemplates();
+                    notifications = [];
+                    saveNotifications();
+                    toast('Импорт успешно выполнен');
+                    showApp();
+                } catch (err) { toast('Ошибка импорта: ' + err.message); }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        }
+
+        function exportCSV() {
+            if (!checkBlocked()) return;
+            if (!can(current(), 'export_data')) { toast('Нет прав'); return; }
+            const head = ['Имя', 'Логин', 'Должность', 'Вступление', 'Повышение', 'Discord', 'Заметки', 'Заморожен', 'Причина', 'Разморозка', 'В отпуске', 'Отпуск с', 'Отпуск по'];
+            const csv = [head, ...users.map(u => [u.name, u.login, u.role, u.join, u.promotion, u.discord, u.notes,
+                    u.frozen ? 'Да' : 'Нет', u.frozenReason || '', u.frozenUntil || '',
+                    u.onVacation ? 'Да' : 'Нет', u.vacationFrom || '', u.vacationTo || ''
+                ])].map(r =>
+                r.map(v => `"${String(v??'').replace(/"/g,'""')}"`).join(';')).join('\r\n');
+            const a = document.createElement('a'),
+                url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }));
+            a.href = url;
+            a.download = 'sotrudniki.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+            toast('Экспорт CSV готов');
+        }
+
+        // ------------------------------ ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК ------------------------------
+        function switchTab(tab) {
+            const user = current();
+            if (tab === 'staff' && !can(user, 'view_staff')) tab = 'tasks';
+            if (tab === 'logs' && !can(user, 'view_logs')) tab = 'profile';
+            if (tab === 'roles' && !can(user, 'manage_roles') && !can(user, 'manage_permissions')) tab = 'profile';
+
+            ['staff', 'tasks', 'logs', 'roles', 'analytics', 'profile'].forEach(t => {
+                const el = document.getElementById('section' + t.charAt(0).toUpperCase() + t.slice(1));
+                if (el) el.classList.toggle('hidden', t !== tab);
+                const btn = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
+                if (btn) btn.classList.toggle('active', t === tab);
+            });
+
+            const taskActions = document.getElementById('taskActions');
+            if (taskActions) taskActions.style.display = can(user, 'create_task') ? 'flex' : 'none';
+
+            updateTabsVisibility();
+
+            if (tab === 'profile') {
+                if (!profileUserId) {
+                    const cur = current();
+                    if (cur) { profileUserId = cur.id;
+                        renderProfileTab(cur.id); } else document.getElementById('profileContainer').innerHTML =
+                        '<p class="muted">Нет активного пользователя</p>';
+                } else {
+                    const exists = users.some(u => u.id === profileUserId);
+                    if (!exists) {
+                        profileUserId = null;
+                        const cur = current();
+                        if (cur) { profileUserId = cur.id;
+                            renderProfileTab(cur.id); } else document.getElementById('profileContainer').innerHTML =
+                            '<p class="muted">Пользователь удалён</p>';
+                    } else renderProfileTab(profileUserId);
+                }
+            }
+            if (tab === 'tasks') renderTasks();
+            if (tab === 'logs') renderLogs();
+            if (tab === 'roles') renderRolePermissions();
+            if (tab === 'staff') renderStaff();
+            if (tab === 'analytics') renderAnalytics();
+        }
+
+        // ------------------------------ НАСТРОЙКИ ЦВЕТОВ ------------------------------
+        function openSettings() {
+            const user = current();
+            if (!user) return;
+            const colors = getUserColors(user);
+            let html = `
+                <h2>Настройка цветов</h2>
+                <p class="muted">Выберите готовую тему или настройте каждый цвет отдельно.</p>
+                <div class="theme-selector">
+            `;
+            const themeNames = Object.keys(THEMES);
+            const themeLabels = { dark: '🌙 Тёмная', light: '☀️ Светлая', green: '🌿 Зелёная', blue: '🌊 Синяя',
+                gold: '✨ Золотая' };
+            let activeTheme = null;
+            for (const name of themeNames) {
+                const theme = THEMES[name];
+                let match = true;
+                for (const key of COLOR_KEYS) { if (colors[key] !== theme[key]) { match = false; break; } }
+                if (match) { activeTheme = name; break; }
+            }
+            for (const name of themeNames) {
+                const label = themeLabels[name] || name;
+                const active = name === activeTheme ? 'active' : '';
+                html += `<button class="theme-btn ${active}" onclick="applyThemeColors('${name}')">${label}</button>`;
+            }
+            html += `</div>
+                <hr style="border-color:var(--line);margin:15px 0;">
+                <div class="color-picker-grid">
+            `;
+            for (const key of COLOR_KEYS) {
+                const label = COLOR_LABELS[key] || key;
+                const val = colors[key] || '#000000';
+                html += `
+                    <div class="color-picker-item">
+                        <label>${label}</label>
+                        <input type="color" id="cp_${key}" value="${val}" oninput="updateColor('${key}', this.value)">
+                        <input type="text" id="ct_${key}" value="${val}" onchange="updateColorFromText('${key}', this.value)">
+                    </div>
+                `;
+            }
+            html += `</div>
+                <div class="modal-actions">
+                    <button class="btn" onclick="closeModal()">Закрыть</button>
+                </div>
+            `;
+            document.getElementById('modalContent').innerHTML = html;
+            document.getElementById('modal').classList.remove('hidden');
+        }
+
+        function applyThemeColors(themeName) {
+            const theme = THEMES[themeName];
+            if (!theme) return;
+            const user = current();
+            if (!user) return;
+            saveUserColors(user.id, { ...theme });
+            for (const key of COLOR_KEYS) {
+                const colorInput = document.getElementById('cp_' + key);
+                const textInput = document.getElementById('ct_' + key);
+                if (colorInput) colorInput.value = theme[key];
+                if (textInput) textInput.value = theme[key];
+            }
+            const btns = document.querySelectorAll('.theme-btn');
+            btns.forEach(btn => btn.classList.remove('active'));
+            const themeLabels = { dark: '🌙 Тёмная', light: '☀️ Светлая', green: '🌿 Зелёная', blue: '🌊 Синяя',
+                gold: '✨ Золотая' };
+            btns.forEach(btn => {
+                if (btn.textContent.trim() === (themeLabels[themeName] || themeName)) btn.classList.add('active');
+            });
+            toast('Тема применена');
+        }
+
+        function updateColor(key, value) {
+            const textInput = document.getElementById('ct_' + key);
+            if (textInput) textInput.value = value;
+            document.documentElement.style.setProperty('--' + key, value);
+            const user = current();
+            if (!user) return;
+            const colors = getUserColors(user);
+            colors[key] = value;
+            saveUserColors(user.id, colors);
+            document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+        }
+
+        function updateColorFromText(key, value) {
+            if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                const colorInput = document.getElementById('cp_' + key);
+                if (colorInput) colorInput.value = value;
+                document.documentElement.style.setProperty('--' + key, value);
+                const user = current();
+                if (!user) return;
+                const colors = getUserColors(user);
+                colors[key] = value;
+                saveUserColors(user.id, colors);
+                document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+            } else toast('Некорректный формат цвета (используйте #rrggbb)');
+        }
+
+        // ------------------------------ МОДАЛКА / TOAST ------------------------------
+        function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+        function toast(t) { const x = document.getElementById('toast');
+            x.textContent = t;
+            x.classList.add('show');
+            setTimeout(() => x.classList.remove('show'), 2000); }
+
+        // ------------------------------ СТАРТ ------------------------------
+        if (currentId && current()) showApp();
+        else { document.getElementById('auth').classList.remove('hidden');
+            switchAuth(users.length ? 'login' : 'register'); }
+
+        // Инициализация вторых графиков
+        setTimeout(() => {
+            const ctx1b = document.getElementById('rolesChart2')?.getContext('2d');
+            const ctx2b = document.getElementById('growthChart2')?.getContext('2d');
+            if (ctx1b && ctx2b) {
+                new Chart(ctx1b, { type: 'bar', data: { labels: [], datasets: [{ label: 'Сотрудников', data: [],
+                            backgroundColor: '#39c982', borderRadius: 4 }] }, options: { responsive: true,
+                        maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: {
+                                beginAtZero: true, ticks: { color: '#9db3a7', font: { size: 10 } },
+                                grid: { color: '#20382b' } }, x: { ticks: { color: '#9db3a7',
+                                    font: { size: 9 } } } } } });
+                new Chart(ctx2b, { type: 'line', data: { labels: [], datasets: [{ label: 'Новых', data: [],
+                            borderColor: '#2e9dff', backgroundColor: '#2e9dff22', fill: true, tension: 0.2,
+                            pointRadius: 2 }] }, options: { responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true,
+                                ticks: { color: '#9db3a7', font: { size: 10 } }, grid: { color: '#20382b' } },
+                            x: { ticks: { color: '#9db3a7', font: { size: 9 } } } } } });
+                updateCharts();
+            }
+        }, 100);
+    </script>
+</body>
+</html>
