@@ -1,0 +1,864 @@
+/* ══════════════════════════════════════════════════════════════
+   ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА + HR-ХАБ И ПОДДЕРЖКА v3.0
+   ══════════════════════════════════════════════════════════════ */
+window.hrRequests = JSON.parse(localStorage.getItem('hrRequests') || '[]');
+window._hrCabinetTab = window._hrCabinetTab || 'actions'; // 'actions' | 'tickets'
+window._hrSelfFilter = window._hrSelfFilter || 'all';
+window._hrFilterStatus = window._hrFilterStatus || 'all';
+window._hrFilterType = window._hrFilterType || '';
+window._hrSearchQuery = window._hrSearchQuery || '';
+window._pendingHrImg = '';
+
+function _saveHrRequests() {
+  try {
+    localStorage.setItem('hrRequests', JSON.stringify(window.hrRequests || new Array()));
+  } catch (e) { }
+}
+
+function _canManageHrRequests(u) {
+  if (!u) return false;
+  return can(u, 'manage_staff') || can(u, 'manage_permissions') || can(u, 'edit_task');
+}
+
+var HR_TYPE_META = {
+  vacation:  { icon: '🌴', label: 'Отпуск', desc: 'Официальный отдых с сохранением места', needDates: true, needProof: false },
+  dayoff:    { icon: '⏳', label: 'Отгул / Заморозка', desc: 'Временный перерыв от задач на 1–5 дней', needDates: true, needProof: false },
+  promotion: { icon: '📈', label: 'Повышение роли', desc: 'Заявка на новую должность и оклад', needDates: false, needProof: true },
+  advance:   { icon: '💰', label: 'Аванс на баланс', desc: 'Досрочная выплата части зарплаты в ₽', needDates: false, needProof: false },
+  unwarn:    { icon: '🛡️', label: 'Снятие выговора', desc: 'Отчёт об отработке предупреждения', needDates: false, needProof: true },
+  support:   { icon: '🆘', label: 'Техподдержка', desc: 'Вопрос руководству, баг или помощь', needDates: false, needProof: true }
+};
+
+var HR_PRIORITY_META = {
+  normal:   { icon: '🟢', label: 'Обычный', weight: 1, border: 'var(--line)' },
+  urgent:   { icon: '🟡', label: 'Срочный', weight: 2, border: 'rgba(240,216,120,0.45)' },
+  critical: { icon: '🔥', label: 'Критический', weight: 3, border: 'rgba(228,92,109,0.55)' }
+};
+
+/* ── Сквозная кнопка «🆘 Поддержка» в верхней шапке сайта ── */
+function ensureGlobalSupportButton() {
+  var me = current();
+  if (!me) return;
+  if (document.getElementById('globalTopSupportBtn')) return;
+
+  var headerHost = document.querySelector('header .row, header, .topbar, #topBar');
+  if (!headerHost) return;
+
+  var btn = _mkEl('button', {
+    id: 'globalTopSupportBtn',
+    className: 'btn small',
+    cssText: 'border-color:rgba(115,183,255,0.4);color:#8ec5ff;margin-left:6px;',
+    textContent: '🆘 Поддержка',
+    title: 'Открыть обращение в техподдержку или Кадровый центр',
+    onclick: function () { openCreateHrRequestModal('support'); }
+  });
+  headerHost.appendChild(btn);
+}
+
+/* ── Модалка создания заявки / тикета ── */
+function openCreateHrRequestModal(defaultType) {
+  var me = current();
+  if (!me) return;
+  window._pendingHrImg = '';
+
+  var rolesList = Array.from(new Set((users || new Array()).map(function (item) { return item.role; }).filter(Boolean)));
+  if (!rolesList.length) rolesList = new Array('Сотрудник', 'Аналитик', 'Куратор', 'Администратор');
+
+  var box = document.getElementById('modalContent');
+  box.innerHTML = '';
+
+  box.appendChild(_mkEl('h2', { textContent: '📝 Новое обращение в HR / Поддержку' }));
+  box.appendChild(_mkEl('p', {
+    className: 'muted',
+    cssText: 'margin-bottom:12px;',
+    textContent: 'Заполните детали обращения. Вы сможете вести переписку и прикреплять скриншоты внутри тикета.'
+  }));
+
+  var selType = _mkEl('select', null, Object.keys(HR_TYPE_META).map(function (k) {
+    var opt = _mkEl('option', { value: k, textContent: HR_TYPE_META[k].icon + ' ' + HR_TYPE_META[k].label });
+    if ((defaultType || 'vacation') === k) opt.selected = true;
+    return opt;
+  }));
+
+  var selPrio = _mkEl('select', null, Object.keys(HR_PRIORITY_META).map(function (k) {
+    return _mkEl('option', { value: k, textContent: HR_PRIORITY_META[k].icon + ' ' + HR_PRIORITY_META[k].label });
+  }));
+
+  var todayIso = new Date().toISOString().slice(0, 10);
+  var inpDateFrom = _mkEl('input', { type: 'date', value: todayIso });
+  var inpDays = _mkEl('input', { type: 'number', min: '1', max: '60', value: '3' });
+  var datesBox = _mkEl('div', { className: 'grid' }, new Array(
+    _mkField('Дата начала', inpDateFrom),
+    _mkField('Длительность (дней)', inpDays)
+  ));
+
+  var selTargetRole = _mkEl('select', null, rolesList.map(function (r) {
+    var opt = _mkEl('option', { value: r, textContent: r });
+    if (r === me.role) opt.selected = true;
+    return opt;
+  }));
+  var promoBox = _mkField('Желаемая должность (сейчас: ' + (me.role || 'Сотрудник') + ')', selTargetRole);
+
+  var inpAdvanceRub = _mkEl('input', { type: 'number', min: '100', max: '50000', value: '1000', placeholder: 'Сумма в ₽...' });
+  var advanceBox = _mkField('Запрашиваемая сумма аванса (₽)', inpAdvanceRub);
+
+  var warnInfoBox = _mkEl('div', {
+    cssText: 'padding:8px 12px;background:rgba(240,216,120,0.08);border:1px solid rgba(240,216,120,0.3);border-radius:8px;font-size:12px;margin-bottom:10px;',
+    textContent: '⚠️ Активных выговоров на вашем аккаунте: ' + (Number(me.warnings) || 0) + ' из 3'
+  });
+
+  var inpReason = _mkEl('textarea', {
+    rows: '3',
+    placeholder: 'Подробно опишите суть вопроса, причину отпуска или приложите отчёт...'
+  });
+
+  var prevImg = _mkEl('div', { cssText: 'margin-top:8px;' });
+  var fileInp = _mkEl('input', {
+    type: 'file',
+    accept: 'image/*',
+    onchange: async function () {
+      var f = Array.from(fileInp.files || new Array()).at(0);
+      if (!f) return;
+      var dataUrl = typeof _compressTaskImage === 'function' ? await _compressTaskImage(f) : '';
+      if (dataUrl) {
+        window._pendingHrImg = dataUrl;
+        prevImg.innerHTML = '';
+        prevImg.appendChild(_mkEl('img', {
+          src: dataUrl,
+          cssText: 'width:84px;height:84px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;',
+          onclick: function () { if (typeof openTaskImageLightbox === 'function') openTaskImageLightbox(dataUrl); }
+        }));
+      }
+    }
+  });
+  var proofBox = _mkField('📸 Скриншот / вложение (необязательно)', _mkEl('div', null, new Array(fileInp, prevImg)));
+
+  var syncFields = function () {
+    var k = selType.value;
+    var meta = HR_TYPE_META[k] || HR_TYPE_META.support;
+    datesBox.style.display = meta.needDates ? 'grid' : 'none';
+    promoBox.style.display = k === 'promotion' ? 'block' : 'none';
+    advanceBox.style.display = k === 'advance' ? 'block' : 'none';
+    warnInfoBox.style.display = k === 'unwarn' ? 'block' : 'none';
+  };
+  selType.onchange = syncFields;
+  syncFields();
+
+  box.appendChild(_mkEl('div', { className: 'grid' }, new Array(
+    _mkField('Категория обращения', selType),
+    _mkField('Срочность', selPrio)
+  )));
+  box.appendChild(warnInfoBox);
+  box.appendChild(datesBox);
+  box.appendChild(promoBox);
+  box.appendChild(advanceBox);
+  box.appendChild(_mkField('Текст обращения / обоснование', inpReason));
+  box.appendChild(proofBox);
+
+  box.appendChild(_mkEl('div', { className: 'modal-actions' }, new Array(
+    _mkEl('button', { className: 'btn', textContent: 'Отмена', onclick: closeModal }),
+    _mkEl('button', {
+      className: 'btn primary2',
+      textContent: '📤 Отправить обращение',
+      onclick: function () {
+        var kind = selType.value;
+        var reason = (inpReason.value || '').trim();
+        if (!reason) { toast('❌ Заполните текст обращения'); return; }
+        if (kind === 'unwarn' && (Number(me.warnings) || 0) <= 0) {
+          toast('ℹ️ У вас нет активных выговоров для снятия');
+          return;
+        }
+        if (kind === 'promotion' && selTargetRole.value === me.role) {
+          toast('ℹ️ Выберите должность, отличную от текущей');
+          return;
+        }
+
+        var advSum = kind === 'advance' ? Math.max(100, Math.round(Number(inpAdvanceRub.value) || 0)) : 0;
+        var dFrom = inpDateFrom.value || todayIso;
+        var daysCnt = Math.max(1, Math.min(60, Number(inpDays.value) || 1));
+        var endTs = new Date(dFrom + 'T23:59:59').getTime() + (daysCnt - 1) * 86400000;
+        var dTo = new Date(endTs).toISOString().slice(0, 10);
+
+        var reqObj = {
+          id: uid(),
+          time: new Date().toISOString(),
+          userId: me['id'],
+          userName: me['name'],
+          userRole: me['role'] || 'Сотрудник',
+          type: kind,
+          priority: selPrio.value || 'normal',
+          dateFrom: HR_TYPE_META[kind].needDates ? dFrom : '',
+          dateTo: HR_TYPE_META[kind].needDates ? dTo : '',
+          days: HR_TYPE_META[kind].needDates ? daysCnt : 0,
+          targetRole: kind === 'promotion' ? selTargetRole.value : '',
+          advanceAmount: advSum,
+          reason: reason,
+          image: window._pendingHrImg || '',
+          messages: new Array(),
+          status: 'pending',
+          adminReply: '',
+          processedBy: '',
+          processedAt: ''
+        };
+
+        window.hrRequests.unshift(reqObj);
+        window._hrCabinetTab = 'tickets';
+        _saveHrRequests();
+
+        (users || new Array()).forEach(function (adm) {
+          if (adm['id'] !== me['id'] && _canManageHrRequests(adm)) {
+            addNotification(adm['id'], '📝 Новое обращение (' + HR_TYPE_META[kind].label + ') от ' + me['name']);
+          }
+        });
+
+        closeModal();
+        playSound('click');
+        toast('✅ Обращение отправлено! Отслеживайте статус в личном кабинете.');
+        renderHrRequestsModule();
+      }
+    })
+  )));
+
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+/* ── Модальное окно диалога в тикете (с поддержкой скриншотов и переоткрытия) ── */
+function openHrRequestChatModal(reqId) {
+  if (!checkBlocked()) return;
+  var req = (window.hrRequests || new Array()).find(function (x) { return x['id'] === reqId; });
+  var me = current();
+  if (!req || !me) return;
+  if (!Array.isArray(req.messages)) req.messages = new Array();
+
+  var pendingChatImg = '';
+Use code with caution.
+var meta = HR_TYPE_META[req.type] || HR_TYPE_META.support;
+var stLabel = req.status === 'approved' ? '🟢 Одобрено / Решено' : (req.status === 'rejected' ? '🔴 Отклонено' : '🟡 В работе');
+var box = document.getElementById('modalContent');
+box.innerHTML = '';
+box.appendChild(_mkEl('div', { cssText: 'display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;' }, new Array(
+_mkEl('h2', { cssText: 'margin:0;', textContent: '💬 Тикет: ' + meta.icon + ' ' + meta.label }),
+_mkEl('span', { className: 'chip', textContent: stLabel })
+)));
+box.appendChild(_mkEl('div', {
+cssText: 'padding:9px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:8px;font-size:12px;margin-bottom:10px;'
+}, new Array(
+_mkEl('div', { textContent: '👤 Заявитель: ' + req.userName + ' (' + req.userRole + ')' }),
+_mkEl('div', { className: 'muted', cssText: 'margin-top:3px;', textContent: '📌 Исходное обращение: ' + req.reason })
+)));
+var feed = _mkEl('div', {
+cssText: 'display:flex;flex-direction:column;gap:8px;max-height:240px;overflow-y:auto;padding:10px;background:rgba(0,0,0,0.28);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;'
+});
+var renderFeed = function () {
+feed.innerHTML = '';
+if (!req.messages.length) {
+feed.appendChild(_mkEl('div', { className: 'muted', cssText: 'text-align:center;font-size:12px;padding:18px;', textContent: 'Переписка по тикету пока пуста. Напишите сообщение или прикрепите скриншот.' }));
+return;
+}
+req.messages.forEach(function (m) {
+var isMine = m.authorId === me['id'];
+var dt = new Date(m.time).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+var msgChildren = new Array(
+_mkEl('div', { cssText: 'display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;' }, new Array(
+_mkEl('b', { cssText: isMine ? 'color:#7ef5b8;' : 'color:#8ec5ff;', textContent: m.authorName }),
+_mkEl('span', { className: 'muted', textContent: dt })
+)),
+m.text ? _mkEl('div', { cssText: 'font-size:13px;white-space:pre-wrap;', textContent: m.text }) : null
+);
+if (m.image) {
+msgChildren.push(_mkEl('img', {
+src: m.image,
+cssText: 'margin-top:6px;max-width:160px;max-height:110px;border-radius:6px;border:1px solid var(--line);cursor:zoom-in;',
+onclick: function () { if (typeof openTaskImageLightbox === 'function') openTaskImageLightbox(m.image); }
+}));
+}
+feed.appendChild(_mkEl('div', {
+cssText: 'padding:8px 11px;border-radius:8px;background:' + (isMine ? 'rgba(57,201,130,0.1)' : 'rgba(115,183,255,0.08)') + ';border:1px solid var(--line);'
+}, msgChildren));
+});
+feed.scrollTop = feed.scrollHeight;
+};
+renderFeed();
+var inpMsg = _mkEl('textarea', { rows: '2', placeholder: 'Введите сообщение в тикет...' });
+var chatImgBadge = _mkEl('span', { className: 'muted', cssText: 'font-size:11px;' });
+var chatFileInp = _mkEl('input', {
+type: 'file',
+accept: 'image/*',
+cssText: 'display:none;',
+onchange: async function () {
+var f = Array.from(chatFileInp.files || new Array()).at(0);
+if (!f) return;
+var url = typeof _compressTaskImage === 'function' ? await _compressTaskImage(f) : '';
+if (url) {
+pendingChatImg = url;
+chatImgBadge.textContent = '📎 Скриншот прикреплён';
+}
+}
+});
+var leftBtns = new Array(
+_mkEl('button', { className: 'btn small', textContent: '📎 Фото', onclick: function () { chatFileInp.click(); } }),
+chatFileInp,
+chatImgBadge
+);
+// Если тикет закрыт, владелец может его переоткрыть
+if (req.status !== 'pending' && req.userId === me['id']) {
+leftBtns.push(_mkEl('button', {
+className: 'btn small',
+textContent: '🔄 Переоткрыть тикет',
+onclick: function () {
+req.status = 'pending';
+req.messages.push({
+id: uid(),
+time: new Date().toISOString(),
+authorId: me['id'],
+authorName: me['name'],
+text: '🔄 Тикет переоткрыт сотрудником для дополнительного уточнения.'
+});
+_saveHrRequests();
+toast('🔄 Тикет снова в работе');
+openHrRequestChatModal(reqId);
+}
+}));
+}
+var sendRow = _mkEl('div', { cssText: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px;' }, new Array(
+_mkEl('div', { cssText: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;' }, leftBtns),
+_mkEl('div', { cssText: 'display:flex;gap:8px;' }, new Array(
+_mkEl('button', { className: 'btn', textContent: 'Закрыть', onclick: function () { closeModal(); renderHrRequestsModule(); } }),
+_mkEl('button', {
+className: 'btn primary2',
+textContent: '📤 Отправить',
+onclick: function () {
+var txt = (inpMsg.value || '').trim();
+if (!txt && !pendingChatImg) return;
+req.messages.push({
+id: uid(),
+time: new Date().toISOString(),
+authorId: me['id'],
+authorName: me['name'],
+text: txt,
+image: pendingChatImg
+});
+_saveHrRequests();
+inpMsg.value = '';
+pendingChatImg = '';
+chatImgBadge.textContent = '';
+renderFeed();
+if (req.userId !== me['id']) {
+addNotification(req.userId, '💬 Ответ в тикете («' + meta.label + '»): ' + (txt || 'Прикреплён скриншот'));
+}
+}
+})
+))
+));
+box.appendChild(feed);
+box.appendChild(inpMsg);
+box.appendChild(sendRow);
+document.getElementById('modal').classList.remove('hidden');
+}
+/* ── Модалка принятия решения руководителем ── */
+function openReviewHrRequestModal(reqId, decision) {
+if (!checkBlocked() || !_canManageHrRequests(current())) { toast('❌ Нет прав'); return; }
+var req = (window.hrRequests || new Array()).find(function (x) { return x['id'] === reqId; });
+if (!req || req.status !== 'pending') return;
+var isApprove = decision === 'approved';
+var meta = HR_TYPE_META[req.type] || HR_TYPE_META.support;
+var box = document.getElementById('modalContent');
+box.innerHTML = '';
+box.appendChild(_mkEl('h2', { textContent: isApprove ? '✅ Одобрить и закрыть обращение' : '❌ Отклонить обращение' }));
+box.appendChild(_mkEl('p', {
+className: 'muted',
+cssText: 'margin-bottom:10px;',
+textContent: meta.icon + ' ' + meta.label + ' · От: ' + req.userName + ' (' + req.userRole + ')'
+}));
+var infoLines = new Array(
+_mkEl('div', { cssText: 'font-size:13px;', textContent: '💬 Сообщение: ' + req.reason })
+);
+if (req.dateFrom) infoLines.push(_mkEl('div', { className: 'muted', cssText: 'font-size:12px;margin-top:4px;', textContent: '📅 Срок: с ' + req.dateFrom + ' по ' + req.dateTo + ' (' + req.days + ' дн.)' }));
+if (req.targetRole) infoLines.push(_mkEl('div', { className: 'muted', cssText: 'font-size:12px;margin-top:4px;', textContent: '📈 Запрошенная должность: ' + req.targetRole }));
+if (req.advanceAmount) infoLines.push(_mkEl('div', { className: 'muted', cssText: 'font-size:12px;margin-top:4px;', textContent: '💰 Запрошенный аванс: ' + fmtBalance(req.advanceAmount) + ' ₽' }));
+box.appendChild(_mkEl('div', {
+cssText: 'padding:10px 12px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:8px;margin-bottom:12px;'
+}, infoLines));
+if (isApprove && req.type !== 'support') {
+var autoActionText = {
+vacation: '🌴 Сотруднику будет автоматически оформлен отпуск до ' + req.dateTo + '.',
+dayoff: '⏳ Сотруднику будет автоматически включён отгул/заморозка до ' + req.dateTo + '.',
+promotion: '📈 Должность сотрудника будет автоматически изменена на «' + req.targetRole + '».',
+advance: '💰 На баланс сотрудника будет автоматически зачислен аванс +' + fmtBalance(req.advanceAmount) + ' ₽.',
+unwarn: '🛡️ С аккаунта сотрудника будет автоматически снят 1 выговор.'
+};
+box.appendChild(_mkEl('div', {
+cssText: 'padding:8px 12px;background:rgba(57,201,130,0.1);border:1px solid rgba(57,201,130,0.35);border-radius:8px;font-size:12px;color:#7ef5b8;margin-bottom:10px;',
+textContent: autoActionText[req.type] || ''
+}));
+}
+var inpReply = _mkEl('textarea', {
+rows: '2',
+placeholder: isApprove ? 'Финальный ответ сотруднику (необязательно)...' : 'Укажите причину отклонения...'
+});
+box.appendChild(_mkField('Комментарий к решению', inpReply));
+box.appendChild(_mkEl('div', { className: 'modal-actions' }, new Array(
+_mkEl('button', { className: 'btn', textContent: 'Отмена', onclick: closeModal }),
+_mkEl('button', {
+className: 'btn ' + (isApprove ? 'primary2' : 'danger'),
+textContent: isApprove ? '✅ Подтвердить и применить' : '❌ Отклонить',
+onclick: function () {
+var reply = (inpReply.value || '').trim();
+if (!isApprove && !reply) { toast('❌ Укажите причину отказа'); return; }
+var adm = current();
+req.status = isApprove ? 'approved' : 'rejected';
+req.adminReply = reply || (isApprove ? 'Одобрено' : 'Отклонено');
+req.processedBy = adm ? adm['name'] : 'Администратор';
+req.processedAt = new Date().toISOString();
+var targetUser = (users || new Array()).find(function (item) { return item['id'] === req.userId; });
+if (isApprove && targetUser) {
+if (req.type === 'vacation') {
+targetUser.onVacation = true;
+targetUser.vacationUntil = req.dateTo;
+targetUser.vacationReason = req.reason;
+} else if (req.type === 'dayoff') {
+targetUser.frozen = true;
+targetUser.frozenUntil = req.dateTo;
+targetUser.frozenReason = 'Отгул: ' + req.reason;
+} else if (req.type === 'promotion' && req.targetRole) {
+targetUser.role = req.targetRole;
+} else if (req.type === 'advance' && req.advanceAmount > 0) {
+changeBalance(req.userId, req.advanceAmount, 'Аванс по кадровой заявке');
+if (Array.isArray(window.payrollRecords)) {
+window.payrollRecords.unshift({
+id: uid(),
+time: new Date().toISOString(),
+userId: req.userId,
+userName: req.userName,
+type: 'Аванс (Кадровый центр)',
+rub: req.advanceAmount,
+coins: 0,
+reason: req.reason,
+byName: req.processedBy
+});
+if (typeof _savePayrollData === 'function') _savePayrollData();
+}
+} else if (req.type === 'unwarn') {
+targetUser.warnings = Math.max(0, (Number(targetUser.warnings) || 0) - 1);
+}
+saveUsers();
+}
+_saveHrRequests();
+addNotification(
+req.userId,
+(isApprove ? '✅ Ваше обращение одобрено' : '❌ Ваше обращение отклонено') + ' (' + meta.label + ')' + (reply ? ': ' + reply : '')
+);
+closeModal();
+playSound(isApprove ? 'taskDone' : 'click');
+toast(isApprove ? '✅ Обращение одобрено и применено!' : '❌ Обращение отклонено');
+renderHrRequestsModule();
+}
+})
+)));
+document.getElementById('modal').classList.remove('hidden');
+}
+/* ── Экспорт архива заявок в Excel ── */
+function exportHrRequestsToExcel() {
+if (typeof XLSX === 'undefined') { toast('❌ Библиотека XLSX не загружена'); return; }
+var stLabels = { pending: 'В работе', approved: 'Одобрено', rejected: 'Отклонено' };
+var rows = (window.hrRequests || new Array()).map(function (r) {
+var m = HR_TYPE_META[r.type] || HR_TYPE_META.support;
+return {
+'Дата создания': new Date(r.time).toLocaleString('ru-RU'),
+'Сотрудник': r.userName,
+'Должность': r.userRole,
+'Категория': m.label,
+'Срочность': (HR_PRIORITY_META[r.priority] || HR_PRIORITY_META.normal).label,
+'Период': r.dateFrom ? (r.dateFrom + ' — ' + r.dateTo) : '—',
+'Детали': r.targetRole || (r.advanceAmount ? r.advanceAmount + ' ₽' : '—'),
+'Текст обращения': r.reason,
+'Статус': stLabels[r.status] || r.status,
+'Ответ': r.adminReply || '—',
+'Рассмотрел': r.processedBy || '—'
+};
+});
+var ws = XLSX.utils.json_to_sheet(rows);
+var wb = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb, ws, 'Обращения');
+XLSX.writeFile(wb, 'HR_Cabinet_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+toast('📥 Архив обращений выгружен в Excel');
+}
+/* ── Главный рендер Личного кабинета сотрудника + Админ-панели HR ── */
+function renderHrRequestsModule() {
+var me = current();
+if (!me) return;
+if (!Array.isArray(window.hrRequests)) window.hrRequests = new Array();
+ensureGlobalSupportButton();
+var pendingAll = window.hrRequests.filter(function (r) { return r.status === 'pending'; });
+var approvedAll = window.hrRequests.filter(function (r) { return r.status === 'approved'; });
+var rejectedAll = window.hrRequests.filter(function (r) { return r.status === 'rejected'; });
+var myReqs = window.hrRequests.filter(function (r) { return r.userId === me['id']; });
+var myPending = myReqs.filter(function (r) { return r.status === 'pending'; });
+// Подсчёт использованных дней отпуска за год
+var usedVacDays = 0;
+myReqs.forEach(function (r) {
+if (r.type === 'vacation' && r.status === 'approved') usedVacDays += Number(r.days) || 0;
+});
+var leftVacDays = Math.max(0, 14 - usedVacDays);
+// Стаж в команде
+var joinedTs = me.joinedAt ? new Date(me.joinedAt).getTime() : 0;
+var tenureDays = joinedTs ? Math.max(1, Math.floor((Date.now() - joinedTs) / 86400000)) : 1;
+// ══════════════════════════════════════════════════════════════
+// ЧАСТЬ 1: ПОЛНОЦЕННЫЙ ЛИЧНЫЙ КАБИНЕТ СОТРУДНИКА В #sectionStaff
+// ══════════════════════════════════════════════════════════════
+var staffHost = document.getElementById('sectionStaff');
+if (staffHost) {
+var cabBox = document.getElementById('staffHrSelfBox');
+if (!cabBox) {
+cabBox = _mkEl('div', {
+id: 'staffHrSelfBox',
+cssText: 'margin:14px 16px 18px;padding:18px;background:linear-gradient(160deg,rgba(16,35,26,0.92),rgba(10,22,16,0.96));border:1px solid rgba(57,201,130,0.28);border-radius:16px;'
+});
+staffHost.insertBefore(cabBox, staffHost.firstChild);
+}
+cabBox.innerHTML = '';
+// Верхняя карточка профиля сотрудника
+var initial = (me['name'] || '?').trim().charAt(0).toUpperCase();
+var statusText = me.frozen ? ('❄️ Заморозка' + (me.frozenUntil ? ' до ' + me.frozenUntil : ''))
+: (me.onVacation ? ('🌴 В отпуске' + (me.vacationUntil ? ' до ' + me.vacationUntil : ''))
+: '🟢 Активен на смене');
+var profileLeft = _mkEl('div', { cssText: 'display:flex;align-items:center;gap:14px;' }, new Array(
+_mkEl('div', {
+cssText: 'width:50px;height:50px;border-radius:50%;background:linear-gradient(135deg,#2b6b4c,#173c2a);border:2px solid rgba(57,201,130,0.5);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#7ef5b8;flex-shrink:0;',
+textContent: initial
+}),
+_mkEl('div', null, new Array(
+_mkEl('div', { cssText: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' }, new Array(
+_mkEl('h2', { cssText: 'margin:0;font-size:18px;', textContent: me['name'] }),
+_mkEl('span', { className: 'chip', cssText: 'font-size:11px;padding:2px 9px;text-shadow:none;box-shadow:none;', textContent: me['role'] || 'Сотрудник' }),
+_mkEl('span', { className: 'chip', cssText: 'font-size:11px;padding:2px 9px;text-shadow:none;box-shadow:none;', textContent: statusText })
+)),
+_mkEl('div', {
+className: 'muted',
+cssText: 'font-size:12px;margin-top:4px;',
+textContent: 'Личный кабинет сотрудника · В команде: ' + tenureDays + ' дн. · Trust: ' + (typeof getEffectiveTrust === 'function' ? getEffectiveTrust(me) : (me.trust || 100))
+})
+))
+));
+var profileRight = _mkEl('div', { cssText: 'display:flex;gap:8px;flex-wrap:wrap;' }, new Array(
+_mkEl('button', { className: 'btn small primary2', textContent: '➕ Новая заявка', onclick: function () { openCreateHrRequestModal('vacation'); } }),
+_mkEl('button', { className: 'btn small', textContent: '🆘 Написать в поддержку', onclick: function () { openCreateHrRequestModal('support'); } })
+));
+cabBox.appendChild(_mkEl('div', {
+cssText: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:14px;'
+}, new Array(profileLeft, profileRight)));
+// 4 персональных индикатора сотрудника
+var mkSelfStat = function (t, v, sub) {
+return _mkEl('div', {
+cssText: 'padding:10px 12px;background:rgba(0,0,0,0.24);border:1px solid var(--line);border-radius:10px;'
+}, new Array(
+_mkEl('div', { className: 'muted', cssText: 'font-size:10px;text-transform:uppercase;letter-spacing:0.4px;', textContent: t }),
+_mkEl('div', { cssText: 'font-size:16px;font-weight:800;margin-top:3px;', textContent: v }),
+_mkEl('div', { className: 'muted', cssText: 'font-size:11px;margin-top:2px;', textContent: sub })
+));
+};
+cabBox.appendChild(_mkEl('div', {
+cssText: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin-bottom:14px;'
+}, new Array(
+mkSelfStat('МОЙ КОШЕЛЁК', fmtBalance(me.balance || 0) + ' ₽', 'Коины: ' + fmtBalance(me.coins || 0) + ' 🪙'),
+mkSelfStat('ЛИМИТ ОТПУСКА', leftVacDays + ' из 14 дн.', 'Использовано: ' + usedVacDays + ' дн.'),
+mkSelfStat('ДИСЦИПЛИНА', (Number(me.warnings) || 0) + ' / 3 выгов.', (Number(me.warnings) || 0) > 0 ? 'Можно подать на отработку' : 'Нарушений нет'),
+mkSelfStat('МОИ ОБРАЩЕНИЯ', myPending.length + ' активн.', 'Всего подано: ' + myReqs.length)
+)));
+// Переключатель вкладок Личного кабинета
+var mkCabTab = function (key, label) {
+return _mkEl('button', {
+className: 'btn small ' + (window._hrCabinetTab === key ? 'primary2' : ''),
+textContent: label,
+onclick: function () { window._hrCabinetTab = key; renderHrRequestsModule(); }
+});
+};
+cabBox.appendChild(_mkEl('div', { cssText: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;' }, new Array(
+mkCabTab('actions', '📋 Подать заявку в 1 клик'),
+mkCabTab('tickets', '💬 Мои обращения и тикеты (' + myReqs.length + ')')
+)));
+if (window._hrCabinetTab === 'actions') {
+var cardsGrid = _mkEl('div', {
+cssText: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;'
+});
+Object.keys(HR_TYPE_META).forEach(function (k) {
+var meta = HR_TYPE_META[k];
+cardsGrid.appendChild(_mkEl('div', {
+cssText: 'padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:12px;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;gap:8px;',
+onclick: function () { openCreateHrRequestModal(k); }
+}, new Array(
+_mkEl('div', null, new Array(
+_mkEl('div', { cssText: 'font-weight:700;font-size:14px;', textContent: meta.icon + ' ' + meta.label }),
+_mkEl('div', { className: 'muted', cssText: 'font-size:12px;margin-top:4px;', textContent: meta.desc })
+)),
+_mkEl('div', { cssText: 'font-size:11px;font-weight:700;color:#7ef5b8;', textContent: 'Оформить →' })
+)));
+});
+cabBox.appendChild(cardsGrid);
+} else {
+// Вкладка «Мои обращения и тикеты»
+var mkSelfFilter = function (key, lbl) {
+return _mkEl('button', {
+className: 'btn small ' + (window._hrSelfFilter === key ? 'primary2' : ''),
+textContent: lbl,
+onclick: function () { window._hrSelfFilter = key; renderHrRequestsModule(); }
+});
+};
+cabBox.appendChild(_mkEl('div', { cssText: 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;' }, new Array(
+mkSelfFilter('all', 'Все (' + myReqs.length + ')'),
+mkSelfFilter('pending', '🟡 В работе (' + myPending.length + ')'),
+mkSelfFilter('done', '✅ Закрытые (' + (myReqs.length - myPending.length) + ')')
+)));
+var shownSelf = myReqs.filter(function (r) {
+if (window._hrSelfFilter === 'pending') return r.status === 'pending';
+if (window._hrSelfFilter === 'done') return r.status !== 'pending';
+return true;
+});
+if (!shownSelf.length) {
+cabBox.appendChild(_mkEl('div', {
+className: 'empty',
+'data-icon': '📭',
+cssText: 'text-align:center;padding:24px;'
+}, new Array(
+_mkEl('b', { textContent: 'У вас пока нет обращений в этом разделе' }),
+_mkEl('small', { textContent: 'Нажмите «➕ Новая заявка» или «🆘 Написать в поддержку»' })
+)));
+} else {
+var selfList = _mkEl('div', { cssText: 'display:flex;flex-direction:column;gap:8px;' });
+shownSelf.forEach(function (r) {
+var m = HR_TYPE_META[r.type] || HR_TYPE_META.support;
+var dt = new Date(r.time).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+var stTxt = r.status === 'approved' ? '🟢 Одобрено' : (r.status === 'rejected' ? '🔴 Отклонено' : '🟡 В работе');
+var msgCnt = Array.isArray(r.messages) ? r.messages.length : 0;
+selfList.appendChild(_mkEl('div', {
+cssText: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:10px 12px;background:rgba(0,0,0,0.24);border:1px solid var(--line);border-radius:10px;'
+}, new Array(
+_mkEl('div', { cssText: 'flex:1;min-width:220px;' }, new Array(
+_mkEl('div', { cssText: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' }, new Array(
+_mkEl('b', { cssText: 'font-size:13px;', textContent: m.icon + ' ' + m.label }),
+_mkEl('span', { className: 'muted', cssText: 'font-size:11px;', textContent: dt })
+)),
+_mkEl('div', { cssText: 'font-size:12px;margin-top:4px;', textContent: r.reason + (r.dateFrom ? (' (' + r.dateFrom + ' — ' + r.dateTo + ')') : '') }),
+r.adminReply ? _mkEl('div', { className: 'muted', cssText: 'font-size:11px;margin-top:3px;color:#8ec5ff;', textContent: '💬 Ответ руководства: ' + r.adminReply }) : null
+)),
+_mkEl('div', { cssText: 'display:flex;gap:6px;align-items:center;' }, new Array(
+_mkEl('button', { className: 'btn small', textContent: '💬 Открыть чат' + (msgCnt ? ' (' + msgCnt + ')' : ''), onclick: function () { openHrRequestChatModal(r['id']); } }),
+_mkEl('span', { className: 'chip', cssText: 'font-size:11px;padding:2px 8px;', textContent: stTxt })
+))
+)));
+});
+cabBox.appendChild(selfList);
+}
+}
+}
+// ══════════════════════════════════════════════════════════════
+// ЧАСТЬ 2: ПАНЕЛЬ РУКОВОДИТЕЛЯ В АДМИН-ПАНЕЛИ (#sectionStaffFunc)
+// ══════════════════════════════════════════════════════════════
+var adminHost = document.getElementById('sectionStaffFunc');
+if (!adminHost) return;
+var subNav = adminHost.querySelector('.tabs-section');
+var refBtn = subNav ? subNav.querySelector('button') : null;
+var contentContainer = subNav ? subNav.parentNode : adminHost;
+if (subNav && !document.getElementById('adminSubTabHrBtn')) {
+var navBtn = _mkEl('button', {
+id: 'adminSubTabHrBtn',
+className: refBtn ? refBtn.className.replace('active', '').trim() : 'btn small',
+textContent: '📝 Заявки' + (pendingAll.length ? ' (' + pendingAll.length + ')' : ''),
+onclick: function () {
+Array.from(contentContainer.children).forEach(function (ch) {
+if (ch !== subNav && ch.getAttribute('id') !== 'hrAdminModuleBox') {
+if (ch.style.display !== 'none') ch.dataset.prevDisplay = ch.style.display || 'block';
+ch.style.display = 'none';
+}
+});
+Array.from(subNav.querySelectorAll('button')).forEach(function (b) { b.classList.remove('active'); });
+navBtn.classList.add('active');
+var hBox = document.getElementById('hrAdminModuleBox');
+if (hBox) hBox.style.display = 'block';
+}
+});
+Array.from(subNav.querySelectorAll('button')).forEach(function (b) {
+if (b.getAttribute('id') !== 'adminSubTabHrBtn' && !b._hrHooked) {
+b.addEventListener('click', function () {
+navBtn.classList.remove('active');
+var hBox = document.getElementById('hrAdminModuleBox');
+if (hBox) hBox.style.display = 'none';
+Array.from(contentContainer.children).forEach(function (ch) {
+if (ch !== subNav && ch.getAttribute('id') !== 'hrAdminModuleBox' && ch.dataset.prevDisplay !== undefined) {
+ch.style.display = ch.dataset.prevDisplay === 'block' ? '' : ch.dataset.prevDisplay;
+}
+});
+});
+b._hrHooked = true;
+}
+});
+subNav.appendChild(navBtn);
+} else {
+var existingBtn = document.getElementById('adminSubTabHrBtn');
+if (existingBtn) existingBtn.textContent = '📝 Заявки' + (pendingAll.length ? ' (' + pendingAll.length + ')' : '');
+}
+var box = document.getElementById('hrAdminModuleBox');
+if (!box) {
+box = _mkEl('div', {
+id: 'hrAdminModuleBox',
+cssText: 'display:none;margin:14px 0 20px;padding:18px;background:rgba(12,26,19,0.82);border:1px solid var(--line);border-radius:14px;'
+});
+contentContainer.appendChild(box);
+}
+box.innerHTML = '';
+box.appendChild(_mkEl('div', {
+cssText: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:14px;'
+}, new Array(
+_mkEl('div', null, new Array(
+_mkEl('h2', { cssText: 'margin:0;font-size:18px;', textContent: '📝 HR-центр и Техподдержка: Очередь обращений' }),
+_mkEl('div', { className: 'muted', cssText: 'font-size:12px;margin-top:3px;', textContent: 'Рассмотрение кадровых заявок, тикетов поддержки и переписка с сотрудниками' })
+)),
+_mkEl('div', { cssText: 'display:flex;gap:6px;flex-wrap:wrap;' }, new Array(
+_mkEl('button', { className: 'btn small primary2', textContent: '➕ Создать заявку', onclick: function () { openCreateHrRequestModal('vacation'); } }),
+_mkEl('button', { className: 'btn small', textContent: '⬇ Excel', onclick: exportHrRequestsToExcel })
+))
+)));
+var mkKpi = function (t, v, borderCss) {
+return _mkEl('div', {
+cssText: 'padding:10px 14px;background:rgba(255,255,255,0.025);border:1px solid ' + (borderCss || 'var(--line)') + ';border-radius:10px;'
+}, new Array(
+_mkEl('div', { className: 'muted', cssText: 'font-size:11px;text-transform:uppercase;', textContent: t }),
+_mkEl('div', { cssText: 'font-size:18px;font-weight:800;margin-top:3px;', textContent: String(v) })
+));
+};
+box.appendChild(_mkEl('div', {
+cssText: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px;'
+}, new Array(
+mkKpi('🟡 В работе', pendingAll.length, pendingAll.length ? 'rgba(240,216,120,0.4)' : ''),
+mkKpi('🟢 Одобрено', approvedAll.length, 'rgba(57,201,130,0.3)'),
+mkKpi('🔴 Отклонено', rejectedAll.length, ''),
+mkKpi('📂 Всего тикетов', window.hrRequests.length, '')
+)));
+var mkStBtn = function (key, label) {
+return _mkEl('button', {
+className: 'btn small ' + (window._hrFilterStatus === key ? 'primary2' : ''),
+textContent: label,
+onclick: function () { window._hrFilterStatus = key; renderHrRequestsModule(); }
+});
+};
+var searchInp = _mkEl('input', {
+placeholder: '🔍 Поиск по имени или тексту...',
+cssText: 'max-width:210px;padding:5px 10px;font-size:12px;',
+value: window._hrSearchQuery
+});
+searchInp.oninput = function () {
+window._hrSearchQuery = searchInp.value;
+renderHrRequestsModule();
+var el = document.querySelector('#hrAdminModuleBox input[placeholder*="Поиск"]');
+if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+};
+var typeSel = _mkEl('select', { cssText: 'max-width:210px;padding:5px 10px;font-size:12px;' }, new Array(
+_mkEl('option', { value: '', textContent: 'Все категории' })
+).concat(Object.keys(HR_TYPE_META).map(function (k) {
+var opt = _mkEl('option', { value: k, textContent: HR_TYPE_META[k].icon + ' ' + HR_TYPE_META[k].label });
+if (window._hrFilterType === k) opt.selected = true;
+return opt;
+})));
+typeSel.onchange = function () { window._hrFilterType = typeSel.value; renderHrRequestsModule(); };
+box.appendChild(_mkEl('div', {
+cssText: 'display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;'
+}, new Array(
+_mkEl('div', { cssText: 'display:flex;gap:6px;flex-wrap:wrap;' }, new Array(
+mkStBtn('all', 'Все (' + window.hrRequests.length + ')'),
+mkStBtn('pending', '🟡 В работе (' + pendingAll.length + ')'),
+mkStBtn('approved', '🟢 Одобренные'),
+mkStBtn('rejected', '🔴 Отклонённые')
+)),
+_mkEl('div', { cssText: 'display:flex;gap:6px;flex-wrap:wrap;' }, new Array(searchInp, typeSel))
+)));
+var filtered = window.hrRequests.filter(function (r) {
+if (window._hrFilterStatus !== 'all' && r.status !== window._hrFilterStatus) return false;
+if (window._hrFilterType && r.type !== window._hrFilterType) return false;
+if (window._hrSearchQuery) {
+var q = window._hrSearchQuery.toLowerCase();
+var hay = (String(r.userName || '') + ' ' + String(r.reason || '')).toLowerCase();
+if (hay.indexOf(q) === -1) return false;
+}
+return true;
+});
+filtered.sort(function (a, b) {
+if (a.status === 'pending' && b.status !== 'pending') return -1;
+if (a.status !== 'pending' && b.status === 'pending') return 1;
+var wa = (HR_PRIORITY_META[a.priority] || HR_PRIORITY_META.normal).weight;
+var wb = (HR_PRIORITY_META[b.priority] || HR_PRIORITY_META.normal).weight;
+if (wb !== wa) return wb - wa;
+return new Date(b.time).getTime() - new Date(a.time).getTime();
+});
+if (!filtered.length) {
+box.appendChild(_mkEl('div', {
+className: 'empty',
+'data-icon': '📭',
+cssText: 'display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding:32px;'
+}, new Array(
+_mkEl('b', { textContent: 'Обращений по выбранным фильтрам нет' }),
+_mkEl('small', { textContent: 'Новые заявки и тикеты появятся здесь автоматически' })
+)));
+return;
+}
+var listWrap = _mkEl('div', { cssText: 'display:flex;flex-direction:column;gap:10px;' });
+var isAdmin = _canManageHrRequests(me);
+filtered.forEach(function (r) {
+var m = HR_TYPE_META[r.type] || HR_TYPE_META.support;
+var pr = HR_PRIORITY_META[r.priority] || HR_PRIORITY_META.normal;
+var dt = new Date(r.time).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+var stBadge = r.status === 'approved' ? '🟢 Одобрено' : (r.status === 'rejected' ? '🔴 Отклонено' : '🟡 В работе');
+var msgCnt = Array.isArray(r.messages) ? r.messages.length : 0;
+var rightActions = new Array(
+_mkEl('button', { className: 'btn small', textContent: '💬 Чат' + (msgCnt ? ' (' + msgCnt + ')' : ''), onclick: function () { openHrRequestChatModal(r['id']); } }),
+_mkEl('span', { className: 'chip', textContent: stBadge })
+);
+if (r.image && typeof openTaskImageLightbox === 'function') {
+rightActions.unshift(_mkEl('button', { className: 'btn small', textContent: '📸 Фото', onclick: function () { openTaskImageLightbox(r.image); } }));
+}
+if (isAdmin && r.status === 'pending') {
+rightActions.push(_mkEl('button', { className: 'btn small primary2', textContent: '✅ Одобрить', onclick: function () { openReviewHrRequestModal(r['id'], 'approved'); } }));
+rightActions.push(_mkEl('button', { className: 'btn small danger', textContent: '✖ Отклонить', onclick: function () { openReviewHrRequestModal(r['id'], 'rejected'); } }));
+}
+var extraLines = new Array();
+if (r.dateFrom) extraLines.push(_mkEl('div', { cssText: 'font-size:12px;color:#8ec5ff;margin-top:4px;', textContent: '📅 Срок: с ' + r.dateFrom + ' по ' + r.dateTo + ' (' + r.days + ' дн.)' }));
+if (r.targetRole) extraLines.push(_mkEl('div', { cssText: 'font-size:12px;color:#cca8ff;margin-top:4px;', textContent: '📈 Запрошенная должность: ' + r.targetRole }));
+if (r.advanceAmount) extraLines.push(_mkEl('div', { cssText: 'font-size:12px;color:#7ef5b8;margin-top:4px;', textContent: '💰 Сумма аванса: ' + fmtBalance(r.advanceAmount) + ' ₽' }));
+var detailsBlock = new Array(
+_mkEl('div', { cssText: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' }, new Array(
+_mkEl('b', { cssText: 'font-size:14px;', textContent: m.icon + ' ' + m.label }),
+_mkEl('span', { className: 'chip', cssText: 'font-size:11px;padding:1px 8px;', textContent: pr.icon + ' ' + pr.label }),
+_mkEl('span', { className: 'chip', cssText: 'font-size:11px;padding:1px 8px;', textContent: '👤 ' + r.userName + ' (' + r.userRole + ')' }),
+_mkEl('span', { className: 'muted', cssText: 'font-size:11px;', textContent: dt })
+))
+).concat(extraLines).concat(new Array(
+_mkEl('div', { cssText: 'font-size:13px;margin-top:6px;white-space:pre-wrap;', textContent: r.reason }),
+r.adminReply
+? _mkEl('div', { className: 'muted', cssText: 'font-size:12px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line);', textContent: '💬 Решение (' + (r.processedBy || 'Админ') + '): ' + r.adminReply })
+: null
+));
+listWrap.appendChild(_mkEl('div', {
+cssText: 'display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid ' + (r.status === 'pending' ? pr.border : 'var(--line)') + ';border-radius:10px;'
+}, new Array(
+_mkEl('div', { cssText: 'flex:1;min-width:240px;' }, detailsBlock),
+_mkEl('div', { cssText: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;' }, rightActions)
+)));
+});
+box.appendChild(listWrap);
+}
+/* ── Автоматический запуск при переключении вкладок ── */
+(function () {
+if (typeof switchTab === 'function' && !switchTab._wrappedHrCenter) {
+var _origSwitchTabHr = switchTab;
+switchTab = function (tabName) {
+var res = _origSwitchTabHr.apply(this, arguments);
+if (tabName === 'staff' || tabName === 'staffFunc') {
+setTimeout(function () { try { renderHrRequestsModule(); } catch (e) { } }, 30);
+}
+return res;
+};
+switchTab._wrappedHrCenter = true;
+}
+setTimeout(function () {
+try { renderHrRequestsModule(); } catch (e) { }
+}, 250);
+})();
