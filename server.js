@@ -16,6 +16,28 @@ app.use((req, res, next) => {
   next();
 });
 
+// Важно: роут загрузки бинарного файла БД ставим ДО express.json(), чтобы тело запроса не перехватывалось как JSON
+app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
+  const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
+  if (req.query.key !== secret) {
+    return res.status(403).json({ error: "Доступ запрещён: неверный пароль" });
+  }
+  if (!req.body || req.body.length < 100 || req.body.subarray(0, 15).toString() !== "SQLite format 3") {
+    return res.status(400).json({ error: "Файл не является корректной базой SQLite" });
+  }
+  try {
+    db.close();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      if (fs.existsSync(dbPath + suffix)) fs.unlinkSync(dbPath + suffix);
+    }
+    fs.writeFileSync(dbPath, req.body);
+    res.json({ ok: true, message: "✅ База загружена! Сервер перезапускается (подождите 5 сек)..." });
+    setTimeout(() => process.exit(0), 500);
+  } catch (err) {
+    res.status(500).json({ error: "Ошибка записи файла: " + err.message });
+  }
+});
+
 app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -200,14 +222,78 @@ app.post("/api/db", (req, res) => {
   }
 });
 
-// API: Скачать актуальный файл database.sqlite в браузере (с объединением WAL-кэша)
+// API: Скачать актуальный файл database.sqlite
 app.get("/api/download-db", (req, res) => {
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
-    return res.status(403).send("Доступ запрещён");
+    return res.status(403).send("Доступ запрещён: неверный пароль");
   }
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   res.download(dbPath, "database.sqlite");
+});
+
+// API: Полный сброс базы данных (очистка всех таблиц)
+app.post("/api/reset-db", (req, res) => {
+  const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
+  if (req.query.key !== secret) {
+    return res.status(403).json({ error: "Доступ запрещён: неверный пароль" });
+  }
+  db.exec("DELETE FROM users; DELETE FROM db_sections;");
+  res.json({ ok: true, message: "✅ База данных полностью очищена" });
+});
+
+// Веб-админка для управления базой прямо в браузере
+app.get("/api/db-admin", (req, res) => {
+  res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Управление БД</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:460px;margin:40px auto;padding:20px;background:#0f172a;color:#f8fafc}
+    .card{background:#1e293b;padding:24px;border-radius:12px;border:1px solid #334155}
+    input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #475569;box-sizing:border-box;font-size:14px}
+    input{background:#0f172a;color:#fff}
+    button{background:#6366f1;color:#fff;font-weight:600;cursor:pointer;border:none;transition:0.2s}
+    button:hover{background:#4f46e5}
+    button.danger{background:#dc2626}
+    button.danger:hover{background:#b91c1c}
+    hr{border:none;border-top:1px solid #334155;margin:20px 0}
+    #msg{margin-top:12px;font-size:14px;min-height:20px}
+  </style></head><body>
+  <div class="card">
+    <h2 style="margin-top:0">🗄️ Управление SQLite базой</h2>
+    <input id="key" type="password" placeholder="Пароль (из DB_DOWNLOAD_KEY)">
+    <button onclick="dl()">📥 Скачать database.sqlite</button>
+    <hr>
+    <input id="file" type="file" accept=".sqlite,.db">
+    <button onclick="ul()">📤 Загрузить изменённый database.sqlite</button>
+    <hr>
+    <button class="danger" onclick="rst()">🗑️ Сбросить (очистить) всю базу</button>
+    <div id="msg"></div>
+  </div>
+  <script>
+    const base = location.origin + "/api";
+    const msg = document.getElementById("msg");
+    const k = () => encodeURIComponent(document.getElementById("key").value);
+    function dl() {
+      if (!document.getElementById("key").value) return alert("Введите пароль");
+      location.href = base + "/download-db?key=" + k();
+    }
+    async function ul() {
+      const f = document.getElementById("file").files[0];
+      if (!f) return alert("Выберите файл database.sqlite");
+      msg.style.color = "#94a3b8";
+      msg.textContent = "⏳ Загрузка файла...";
+      const r = await fetch(base + "/upload-db?key=" + k(), { method: "POST", body: f });
+      const d = await r.json();
+      msg.style.color = r.ok ? "#4ade80" : "#f87171";
+      msg.textContent = d.message || d.error;
+    }
+    async function rst() {
+      if (!confirm("Точно удалить ВСЕ данные из базы?")) return;
+      const r = await fetch(base + "/reset-db?key=" + k(), { method: "POST" });
+      const d = await r.json();
+      msg.style.color = r.ok ? "#4ade80" : "#f87171";
+      msg.textContent = d.message || d.error;
+    }
+  </script></body></html>`);
 });
 
 // 3. ПОРТ ИЗ RAILWAY ИЛИ 8080 ПО УМОЛЧАНИЮ
