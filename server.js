@@ -4,11 +4,30 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
 const app = express();
+
+// 1. НАСТРОЙКА CORS (разрешаем запросы с Netlify и localhost без установки доп. пакетов)
+app.use((req, res, next) => {
+  const allowedOrigin = process.env.FRONTEND_URL || "*";
+  res.header("Access-Control-Allow-Origin", allowedOrigin);
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// Создаём/открываем базу SQLite встроенным модулем Node.js
-const db = new DatabaseSync(path.join(__dirname, "database.sqlite"));
+// 2. ПУТЬ К БАЗЕ SQLITE (поддерживает Volume на Railway через DB_PATH)
+const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
+const dbDir = path.dirname(dbPath);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
 
 db.exec(`
@@ -65,7 +84,7 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
   }
 }
 
-// API: Загрузить всю базу на сайт (подхватывает правки из колонок DB Browser и пишет их в историю!)
+// API: Загрузить всю базу на сайт
 app.get("/api/db", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   const usersRows = db.prepare("SELECT * FROM users").all();
@@ -85,7 +104,6 @@ app.get("/api/db", (req, res) => {
 
     let userChanged = false;
 
-    // 1. Проверяем, меняли ли БАЛАНС (₽) вручную в SQLite
     if (newBalance !== oldBalance) {
       if (!Array.isArray(u.balanceHistory)) u.balanceHistory = [];
       u.balanceHistory.push({
@@ -99,7 +117,6 @@ app.get("/api/db", (req, res) => {
       userChanged = true;
     }
 
-    // 2. Проверяем, меняли ли КОИНЫ (🪙) вручную в SQLite
     if (newCoins !== oldCoins) {
       if (!Array.isArray(u.coinsHistory)) u.coinsHistory = [];
       u.coinsHistory.push({
@@ -113,7 +130,6 @@ app.get("/api/db", (req, res) => {
       userChanged = true;
     }
 
-    // Синхронизируем значения из обычных столбцов таблицы SQLite поверх JSON
     u.name = r.name;
     u.login = r.login;
     u.role = r.role;
@@ -121,7 +137,6 @@ app.get("/api/db", (req, res) => {
     u.balance = newBalance;
     u.trust = Number(r.trust) || 0;
 
-    // Если были ручные правки в БД — обновляем raw_data в SQLite, чтобы зафиксировать историю
     if (userChanged) {
       if (!hasDbEdits) {
         db.exec("BEGIN");
@@ -186,6 +201,8 @@ app.post("/api/db", (req, res) => {
   }
 });
 
-app.listen(8000, () => {
-  console.log("🚀 Сайт и бэкенд запущены: http://localhost:8000");
+// 3. ПОРТ ИЗ RAILWAY ИЛИ 8000 ПО УМОЛЧАНИЮ
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Бэкенд запущен на порту ${PORT}`);
 });
