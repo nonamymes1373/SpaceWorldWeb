@@ -5,10 +5,17 @@ const { DatabaseSync } = require("node:sqlite");
 
 const app = express();
 
-// 1. НАСТРОЙКА CORS (разрешаем запросы с Netlify и localhost без установки доп. пакетов)
+// 1. НАСТРОЙКА CORS
 app.use((req, res, next) => {
-  const allowedOrigin = process.env.FRONTEND_URL || "*";
-  res.header("Access-Control-Allow-Origin", allowedOrigin);
+  const origin = req.headers.origin;
+  const envOrigin = (process.env.FRONTEND_URL || "").trim().replace(/\/+$/, "");
+
+  if (origin === "https://netlify.app" || (envOrigin && origin === envOrigin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  } else {
+    res.header("Access-Control-Allow-Origin", envOrigin || "*");
+  }
+
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") {
