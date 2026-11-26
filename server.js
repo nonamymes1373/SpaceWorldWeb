@@ -7,15 +7,7 @@ const app = express();
 
 // 1. НАСТРОЙКА CORS
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const envOrigin = (process.env.FRONTEND_URL || "").trim().replace(/\/+$/, "");
-
-  if (origin === "https://netlify.app" || (envOrigin && origin === envOrigin)) {
-    res.header("Access-Control-Allow-Origin", origin);
-  } else {
-    res.header("Access-Control-Allow-Origin", envOrigin || "*");
-  }
-
+  res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") {
@@ -208,8 +200,18 @@ app.post("/api/db", (req, res) => {
   }
 });
 
-// 3. ПОРТ ИЗ RAILWAY ИЛИ 8000 ПО УМОЛЧАНИЮ
-const PORT = process.env.PORT || 8000;
+// API: Скачать актуальный файл database.sqlite в браузере (с объединением WAL-кэша)
+app.get("/api/download-db", (req, res) => {
+  const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
+  if (req.query.key !== secret) {
+    return res.status(403).send("Доступ запрещён");
+  }
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+  res.download(dbPath, "database.sqlite");
+});
+
+// 3. ПОРТ ИЗ RAILWAY ИЛИ 8080 ПО УМОЛЧАНИЮ
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Бэкенд запущен на порту ${PORT}`);
 });
