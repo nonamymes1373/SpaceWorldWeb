@@ -16,7 +16,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Важно: роут загрузки бинарного файла БД ставим ДО express.json(), чтобы тело запроса не перехватывалось как JSON
+// Загрузка бинарного файла БД (до express.json)
 app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
@@ -41,7 +41,7 @@ app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, re
 app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// 2. ПУТЬ К БАЗЕ SQLITE (поддерживает Volume на Railway через DB_PATH)
+// 2. ПУТЬ К БАЗЕ SQLITE
 const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
@@ -51,11 +51,12 @@ if (!fs.existsSync(dbDir)) {
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
 
+// Автоматически пересоздаём таблицу users БЕЗ ограничения UNIQUE на login, чтобы дубликаты не ломали сохранение
 db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
+  CREATE TABLE IF NOT EXISTS users_clean (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    login TEXT UNIQUE NOT NULL,
+    login TEXT NOT NULL,
     role TEXT NOT NULL,
     coins REAL DEFAULT 0,
     balance REAL DEFAULT 0,
@@ -68,6 +69,16 @@ db.exec(`
     value TEXT NOT NULL
   );
 `);
+
+const oldUsersTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").get();
+if (oldUsersTable) {
+  db.exec(`
+    INSERT OR IGNORE INTO users_clean (id, name, login, role, coins, balance, trust, raw_data)
+    SELECT id, name, login, role, coins, balance, trust, raw_data FROM users;
+    DROP TABLE users;
+  `);
+}
+db.exec("ALTER TABLE users_clean RENAME TO users;");
 
 // Автоматический перенос данных из backup.json при первом запуске (если таблица пустая)
 const count = db.prepare("SELECT COUNT(*) as c FROM users").get().c;
@@ -84,13 +95,13 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
   try {
     for (const u of backup.users || []) {
       insUser.run(
-        u.id,
-        u.name,
-        u.login,
+        String(u.id || Date.now() + Math.random()),
+        u.name || "Без имени",
+        u.login || "",
         u.role || "Пользователь",
-        u.coins || 0,
-        u.balance || 0,
-        u.trust || 50,
+        Number(u.coins) || 0,
+        Number(u.balance) || 0,
+        Number(u.trust) || 50,
         JSON.stringify(u),
       );
     }
@@ -171,9 +182,7 @@ app.get("/api/db", (req, res) => {
 
   if (hasDbEdits) {
     db.exec("COMMIT");
-    console.log(
-      "📝 Ручные изменения баланса/коинов из SQLite записаны в историю!",
-    );
+    console.log("📝 Ручные изменения баланса/коинов из SQLite записаны в историю!");
   }
 
   const result = { users };
@@ -192,7 +201,7 @@ app.post("/api/db", (req, res) => {
 
   const delUsers = db.prepare("DELETE FROM users");
   const insUser = db.prepare(
-    "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
   const insSec = db.prepare("INSERT OR REPLACE INTO db_sections VALUES (?, ?)");
 
@@ -201,9 +210,9 @@ app.post("/api/db", (req, res) => {
     delUsers.run();
     for (const u of data.users) {
       insUser.run(
-        u.id,
-        u.name,
-        u.login,
+        String(u.id || Date.now() + Math.random()),
+        u.name || "Без имени",
+        u.login || "",
         u.role || "Пользователь",
         Number(u.coins) || 0,
         Number(u.balance) || 0,
@@ -232,7 +241,7 @@ app.get("/api/download-db", (req, res) => {
   res.download(dbPath, "database.sqlite");
 });
 
-// API: Полный сброс базы данных (очистка всех таблиц)
+// API: Полный сброс базы данных
 app.post("/api/reset-db", (req, res) => {
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
