@@ -9,7 +9,7 @@ const jwt = require("jsonwebtoken");
 const app = express();
 
 const isProd = process.env.NODE_ENV === "production";
-const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/[\r\n\s]+/g, "").replace(/\/+$/, "");
 const ACCESS_SECRET = process.env.ACCESS_SECRET || "dev_access_secret_change_in_railway";
 const REFRESH_SECRET = process.env.REFRESH_SECRET || "dev_refresh_secret_change_in_railway";
 
