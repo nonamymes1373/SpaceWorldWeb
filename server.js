@@ -2,12 +2,43 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
+const cookieParser = require("cookie-parser");
+const helmet = require("helmet");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 
-// 1. НАСТРОЙКА CORS
+// 1. НАСТРОЙКИ ОКРУЖЕНИЯ И БЕЗОПАСНОСТИ (задаются в Railway -> Variables)
+const isProd = process.env.NODE_ENV === "production";
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+const ACCESS_SECRET = process.env.ACCESS_SECRET || "dev_access_secret_change_in_railway";
+const REFRESH_SECRET = process.env.REFRESH_SECRET || "dev_refresh_secret_change_in_railway";
+
+// Обязательно для Railway (работа за прокси-балансировщиком)
+app.set("trust proxy", 1);
+
+app.use(cookieParser());
+
+// 2. ЗАЩИТА CSP (блокировка утечки данных на сторонние домены при Self-XSS)
+app.use(
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", FRONTEND_URL],
+      imgSrc: ["'self'", "data:", "https:"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+    },
+  })
+);
+
+// 3. НАСТРОЙКА CORS (с поддержкой HttpOnly cookies между Netlify и Railway)
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin === FRONTEND_URL || !isProd) {
+    res.header("Access-Control-Allow-Origin", origin || FRONTEND_URL);
+  }
+  res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") {
@@ -41,7 +72,7 @@ app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, re
 app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// 2. ПУТЬ К БАЗЕ SQLITE
+// 4. ПУТЬ К БАЗЕ SQLITE
 const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
@@ -115,6 +146,114 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
     console.error("Ошибка миграции:", err);
   }
 }
+
+// ============ 5. HTTPONLY АВТОРИЗАЦИЯ И ЗАЩИТА СЕССИИ ============
+function setAuthCookies(res, userId) {
+  const accessToken = jwt.sign({ userId }, ACCESS_SECRET, { expiresIn: "15m" });
+  const refreshToken = jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: "7d" });
+
+  const cookieOptions = {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+  };
+
+  res.cookie("access_token", accessToken, {
+    ...cookieOptions,
+    maxAge: 15 * 60 * 1000,
+    path: "/",
+  });
+
+  res.cookie("refresh_token", refreshToken, {
+    ...cookieOptions,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: "/api/auth/refresh",
+  });
+}
+
+function authMiddleware(req, res, next) {
+  const token = req.cookies.access_token;
+  if (!token) return res.status(401).json({ error: "Не авторизован" });
+  try {
+    req.user = jwt.verify(token, ACCESS_SECRET);
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "Токен истек" });
+  }
+}
+
+// Вход по логину и паролю из SQLite
+app.post("/api/auth/login", (req, res) => {
+  const { login, password } = req.body || {};
+  if (!login || !password) {
+    return res.status(400).json({ error: "Введите логин и пароль" });
+  }
+
+  const rows = db
+    .prepare("SELECT * FROM users WHERE LOWER(login) = LOWER(?)")
+    .all(String(login).trim());
+  let matchedUser = null;
+
+  for (const r of rows) {
+    const u = JSON.parse(r.raw_data);
+    if (String(u.pass || u.password || "") === String(password)) {
+      matchedUser = u;
+      break;
+    }
+  }
+
+  if (!matchedUser) {
+    return res.status(401).json({ error: "Неверный логин или пароль" });
+  }
+  if (matchedUser.frozen) {
+    return res.status(403).json({ error: "Аккаунт заморожен" });
+  }
+
+  setAuthCookies(res, matchedUser.id);
+  const safeUser = Object.assign({}, matchedUser);
+  delete safeUser.pass;
+  delete safeUser.password;
+  res.json({ ok: true, user: safeUser });
+});
+
+// Обновление Access-токена по Refresh-куке
+app.post("/api/auth/refresh", (req, res) => {
+  const refreshToken = req.cookies.refresh_token;
+  if (!refreshToken) return res.status(401).json({ error: "Нет refresh токена" });
+  try {
+    const payload = jwt.verify(refreshToken, REFRESH_SECRET);
+    setAuthCookies(res, payload.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(403).json({ error: "Невалидный refresh токен" });
+  }
+});
+
+// Проверка текущей сессии (при обновлении страницы)
+app.get("/api/profile", authMiddleware, (req, res) => {
+  const row = db
+    .prepare("SELECT raw_data FROM users WHERE id = ?")
+    .get(String(req.user.userId));
+  if (!row) return res.status(404).json({ error: "Пользователь не найден" });
+  const u = JSON.parse(row.raw_data);
+  delete u.pass;
+  delete u.password;
+  res.json({ ok: true, user: u });
+});
+
+// Выход (очистка HttpOnly кук)
+app.post("/api/auth/logout", (req, res) => {
+  const clearOptions = {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
+  };
+  res.clearCookie("access_token", { ...clearOptions, path: "/" });
+  res.clearCookie("refresh_token", { ...clearOptions, path: "/api/auth/refresh" });
+  res.json({ ok: true });
+});
+
+// ============ 6. API БАЗЫ ДАННЫХ ============
 
 // API: Загрузить всю базу на сайт
 app.get("/api/db", (req, res) => {
@@ -192,11 +331,58 @@ app.get("/api/db", (req, res) => {
   res.json(result);
 });
 
-// API: Сохранить обновлённую базу с сайта в SQLite
+// API: Сохранить обновлённую базу с сайта в SQLite (с защитой от самоповышения)
 app.post("/api/db", (req, res) => {
   const data = req.body;
   if (!data || !Array.isArray(data.users)) {
     return res.status(400).json({ error: "Некорректный формат данных" });
+  }
+
+  // Проверяем текущего пользователя из HttpOnly-куки
+  let actorId = null;
+  try {
+    if (req.cookies && req.cookies.access_token) {
+      actorId = jwt.verify(req.cookies.access_token, ACCESS_SECRET).userId;
+    }
+  } catch (e) {}
+
+  if (actorId) {
+    // 1. Запрет одобрять или отклонять собственную заявку на повышение
+    if (Array.isArray(data.promotionRequests)) {
+      const oldSec = db
+        .prepare("SELECT value FROM db_sections WHERE key = 'promotionRequests'")
+        .get();
+      const oldReqs = oldSec ? JSON.parse(oldSec.value) :;
+      for (const newR of data.promotionRequests) {
+        const oldR = oldReqs.find((x) => x.id === newR.id);
+        if (
+          oldR &&
+          oldR.status === "pending" &&
+          newR.status !== "pending" &&
+          String(newR.userId) === String(actorId)
+        ) {
+          return res.status(403).json({
+            error: "Нельзя одобрить или отклонить собственную заявку на повышение",
+          });
+        }
+      }
+    }
+
+    // 2. Запрет менять собственную роль напрямую через подмену POST-запроса (кроме Владельца)
+    const oldActorRow = db
+      .prepare("SELECT role FROM users WHERE id = ?")
+      .get(String(actorId));
+    const newActor = data.users.find((u) => String(u.id) === String(actorId));
+    if (
+      oldActorRow &&
+      newActor &&
+      oldActorRow.role !== "Владелец" &&
+      oldActorRow.role !== newActor.role
+    ) {
+      return res.status(403).json({
+        error: "Нельзя изменить собственную роль",
+      });
+    }
   }
 
   const delUsers = db.prepare("DELETE FROM users");
@@ -255,58 +441,55 @@ app.post("/api/reset-db", (req, res) => {
 app.get("/api/db-admin", (req, res) => {
   res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Управление БД</title>
   <style>
-    body{font-family:system-ui,sans-serif;max-width:460px;margin:40px auto;padding:20px;background:#0f172a;color:#f8fafc}
-    .card{background:#1e293b;padding:24px;border-radius:12px;border:1px solid #334155}
-    input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;border:1px solid #475569;box-sizing:border-box;font-size:14px}
-    input{background:#0f172a;color:#fff}
-    button{background:#6366f1;color:#fff;font-weight:600;cursor:pointer;border:none;transition:0.2s}
-    button:hover{background:#4f46e5}
-    button.danger{background:#dc2626}
-    button.danger:hover{background:#b91c1c}
-    hr{border:none;border-top:1px solid #334155;margin:20px 0}
-    #msg{margin-top:12px;font-size:14px;min-height:20px}
+    body{font-family:system-ui,sans-serif;background:#0d131a;color:#e6edf3;max-width:520px;margin:40px auto;padding:20px}
+    .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;margin-bottom:16px}
+    h2{margin-top:0}
+    input[type="password"],input[type="file"]{width:100%;box-sizing:border-box;padding:10px;margin:8px 0 16px;border-radius:8px;border:1px solid #30363d;background:#0d131a;color:#fff}
+    button{width:100%;padding:12px;border:none;border-radius:8px;font-weight:700;cursor:pointer;margin-bottom:8px;font-size:14px}
+    .btn-dl{background:#238636;color:#fff}
+    .btn-up{background:#1f6feb;color:#fff}
+    .btn-rst{background:#da3633;color:#fff}
+    #msg{margin-top:12px;font-weight:600;white-space:pre-wrap}
   </style></head><body>
   <div class="card">
-    <h2 style="margin-top:0">🗄️ Управление SQLite базой</h2>
-    <input id="key" type="password" placeholder="Пароль (из DB_DOWNLOAD_KEY)">
-    <button onclick="dl()">📥 Скачать database.sqlite</button>
-    <hr>
-    <input id="file" type="file" accept=".sqlite,.db">
-    <button onclick="ul()">📤 Загрузить изменённый database.sqlite</button>
-    <hr>
-    <button class="danger" onclick="rst()">🗑️ Сбросить (очистить) всю базу</button>
+    <h2>🗄 Управление SQLite БД</h2>
+    <label>Ключ доступа (DB_DOWNLOAD_KEY):</label>
+    <input type="password" id="key" placeholder="Введите пароль...">
+    <button class="btn-dl" onclick="dl()">⬇ Скачать database.sqlite</button>
+    <hr style="border-color:#30363d;margin:16px 0">
+    <label>Загрузить файл database.sqlite:</label>
+    <input type="file" id="file" accept=".sqlite,.db">
+    <button class="btn-up" onclick="up()">⬆ Загрузить и перезапустить</button>
+    <hr style="border-color:#30363d;margin:16px 0">
+    <button class="btn-rst" onclick="rst()">🗑 Очистить базу данных</button>
     <div id="msg"></div>
   </div>
   <script>
-    const base = location.origin + "/api";
-    const msg = document.getElementById("msg");
-    const k = () => encodeURIComponent(document.getElementById("key").value);
+    const msg = document.getElementById('msg');
     function dl() {
-      if (!document.getElementById("key").value) return alert("Введите пароль");
-      location.href = base + "/download-db?key=" + k();
+      const k = document.getElementById('key').value;
+      window.location.href = '/api/download-db?key=' + encodeURIComponent(k);
     }
-    async function ul() {
-      const f = document.getElementById("file").files[0];
-      if (!f) return alert("Выберите файл database.sqlite");
-      msg.style.color = "#94a3b8";
-      msg.textContent = "⏳ Загрузка файла...";
-      const r = await fetch(base + "/upload-db?key=" + k(), { method: "POST", body: f });
-      const d = await r.json();
-      msg.style.color = r.ok ? "#4ade80" : "#f87171";
-      msg.textContent = d.message || d.error;
+    async function up() {
+      const k = document.getElementById('key').value;
+      const f = document.getElementById('file').files[0];
+      if (!f) return msg.textContent = '❌ Выберите файл .sqlite';
+      msg.textContent = '⏳ Загрузка...';
+      const res = await fetch('/api/upload-db?key=' + encodeURIComponent(k), { method: 'POST', body: f });
+      const data = await res.json();
+      msg.textContent = data.message || data.error;
     }
     async function rst() {
-      if (!confirm("Точно удалить ВСЕ данные из базы?")) return;
-      const r = await fetch(base + "/reset-db?key=" + k(), { method: "POST" });
-      const d = await r.json();
-      msg.style.color = r.ok ? "#4ade80" : "#f87171";
-      msg.textContent = d.message || d.error;
+      if (!confirm('Точно удалить все данные из базы?')) return;
+      const k = document.getElementById('key').value;
+      const res = await fetch('/api/reset-db?key=' + encodeURIComponent(k), { method: 'POST' });
+      const data = await res.json();
+      msg.textContent = data.message || data.error;
     }
   </script></body></html>`);
 });
 
-// 3. ПОРТ ИЗ RAILWAY ИЛИ 8080 ПО УМОЛЧАНИЮ
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Бэкенд запущен на порту ${PORT}`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Сервер запущен на порту ${PORT} (CORS: ${FRONTEND_URL})`);
 });
