@@ -16,6 +16,39 @@ const REFRESH_SECRET = process.env.REFRESH_SECRET || "dev_refresh_secret_change_
 app.set("trust proxy", 1);
 app.use(cookieParser());
 
+const _rateBuckets = new Map();
+function checkIpRate(req, bucket, maxReq, windowMs) {
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",").trim();
+  const key = ip + ":" + bucket;
+  const now = Date.now();
+  let rec = _rateBuckets.get(key);
+  if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + windowMs };
+  rec.count++;
+  _rateBuckets.set(key, rec);
+  return rec.count <= maxReq;
+}
+
+let _lastAutoBackupHour = "";
+function runAutoSqliteBackup(dbInstance, sqlitePath) {
+  try {
+    const hourKey = new Date().toISOString().slice(0, 13).replace("T", "_");
+    if (hourKey === _lastAutoBackupHour) return;
+    _lastAutoBackupHour = hourKey;
+    const bDir = path.join(path.dirname(sqlitePath), "backups");
+    if (!fs.existsSync(bDir)) fs.mkdirSync(bDir, { recursive: true });
+    dbInstance.exec("PRAGMA wal_checkpoint(PASSIVE);");
+    const dest = path.join(bDir, "database_" + hourKey + ".sqlite");
+    fs.copyFileSync(sqlitePath, dest);
+    const files = fs.readdirSync(bDir).filter(f => f.startsWith("database_")).sort();
+    while (files.length > 12) {
+      const old = files.shift();
+      try { fs.unlinkSync(path.join(bDir, old)); } catch (_) {}
+    }
+  } catch (e) {
+    console.warn("Auto-backup skip:", e.message);
+  }
+}
+
 app.use(
   helmet.contentSecurityPolicy({
     directives: {
@@ -43,12 +76,15 @@ app.use((req, res, next) => {
 });
 
 app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
+  if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
+    return res.status(429).json({ error: "Too many attempts. Wait 15 minutes." });
+  }
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
-    return res.status(403).json({ error: "Доступ запрещён: неверный пароль" });
+    return res.status(403).json({ error: "Access denied: wrong password" });
   }
   if (!req.body || req.body.length < 100 || req.body.subarray(0, 15).toString() !== "SQLite format 3") {
-    return res.status(400).json({ error: "Файл не является корректной базой SQLite" });
+    return res.status(400).json({ error: "Invalid SQLite database file" });
   }
   try {
     db.close();
@@ -56,10 +92,10 @@ app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, re
       if (fs.existsSync(dbPath + suffix)) fs.unlinkSync(dbPath + suffix);
     }
     fs.writeFileSync(dbPath, req.body);
-    res.json({ ok: true, message: "✅ База загружена! Сервер перезапускается (подождите 5 сек)..." });
+    res.json({ ok: true, message: "Database uploaded! Restarting server..." });
     setTimeout(() => process.exit(0), 500);
   } catch (err) {
-    res.status(500).json({ error: "Ошибка записи файла: " + err.message });
+    res.status(500).json({ error: "Write error: " + err.message });
   }
 });
 
@@ -119,9 +155,9 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
     for (const u of backupUsers) {
       insUser.run(
         String(u.id || Date.now() + Math.random()),
-        u.name || "Без имени",
+        u.name || "User",
         u.login || "",
-        u.role || "Пользователь",
+        u.role || "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c",
         Number(u.coins) || 0,
         Number(u.balance) || 0,
         Number(u.trust) || 50,
@@ -132,10 +168,10 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
       if (k !== "users") insSec.run(k, JSON.stringify(v));
     }
     db.exec("COMMIT");
-    console.log("✅ Данные из backup.json перенесены в database.sqlite!");
+    console.log("Migration from backup.json completed!");
   } catch (err) {
     db.exec("ROLLBACK");
-    console.error("Ошибка миграции:", err);
+    console.error("Migration error:", err);
   }
 }
 
@@ -164,19 +200,22 @@ function setAuthCookies(res, userId) {
 
 function authMiddleware(req, res, next) {
   const token = req.cookies.access_token;
-  if (!token) return res.status(401).json({ error: "Не авторизован" });
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
     req.user = jwt.verify(token, ACCESS_SECRET);
     next();
   } catch (err) {
-    res.status(401).json({ error: "Токен истек" });
+    res.status(401).json({ error: "Token expired" });
   }
 }
 
 app.post("/api/auth/login", (req, res) => {
+  if (!checkIpRate(req, "login", 10, 15 * 60000)) {
+    return res.status(429).json({ error: "Too many login attempts. Wait 15 minutes." });
+  }
   const { userId, login, password } = req.body || {};
   if (!userId && !login) {
-    return res.status(400).json({ error: "Не указан пользователь" });
+    return res.status(400).json({ error: "User not specified" });
   }
 
   let matchedUser = null;
@@ -195,10 +234,10 @@ app.post("/api/auth/login", (req, res) => {
   }
 
   if (!matchedUser) {
-    return res.status(401).json({ error: "Пользователь не найден" });
+    return res.status(401).json({ error: "User not found" });
   }
   if (matchedUser.frozen) {
-    return res.status(403).json({ error: "Аккаунт заморожен" });
+    return res.status(403).json({ error: "Account frozen" });
   }
 
   setAuthCookies(res, matchedUser.id);
@@ -211,13 +250,13 @@ app.post("/api/auth/login", (req, res) => {
 
 app.post("/api/auth/refresh", (req, res) => {
   const refreshToken = req.cookies.refresh_token;
-  if (!refreshToken) return res.status(401).json({ error: "Нет refresh токена" });
+  if (!refreshToken) return res.status(401).json({ error: "No refresh token" });
   try {
     const payload = jwt.verify(refreshToken, REFRESH_SECRET);
     setAuthCookies(res, payload.userId);
     res.json({ ok: true });
   } catch (err) {
-    res.status(403).json({ error: "Невалидный refresh токен" });
+    res.status(403).json({ error: "Invalid refresh token" });
   }
 });
 
@@ -225,7 +264,7 @@ app.get("/api/profile", authMiddleware, (req, res) => {
   const row = db
     .prepare("SELECT raw_data FROM users WHERE id = ?")
     .get(String(req.user.userId));
-  if (!row) return res.status(404).json({ error: "Пользователь не найден" });
+  if (!row) return res.status(404).json({ error: "User not found" });
   const u = JSON.parse(row.raw_data);
   delete u.pass;
   delete u.password;
@@ -267,10 +306,10 @@ app.get("/api/db", (req, res) => {
       if (!Array.isArray(u.balanceHistory)) u.balanceHistory = new Array();
       u.balanceHistory.push({
         time: nowIso,
-        by: "База данных",
+        by: "Database",
         amount: newBalance - oldBalance,
         after: newBalance,
-        reason: "Изменение напрямую в базе данных",
+        reason: "Direct DB update",
       });
       if (u.balanceHistory.length > 500) u.balanceHistory.shift();
       userChanged = true;
@@ -280,10 +319,10 @@ app.get("/api/db", (req, res) => {
       if (!Array.isArray(u.coinsHistory)) u.coinsHistory = new Array();
       u.coinsHistory.push({
         time: nowIso,
-        by: "База данных",
+        by: "Database",
         amount: newCoins - oldCoins,
         after: newCoins,
-        reason: "Изменение напрямую в базе данных",
+        reason: "Direct DB update",
       });
       if (u.coinsHistory.length > 500) u.coinsHistory.shift();
       userChanged = true;
@@ -309,7 +348,6 @@ app.get("/api/db", (req, res) => {
 
   if (hasDbEdits) {
     db.exec("COMMIT");
-    console.log("📝 Ручные изменения баланса/коинов из SQLite записаны в историю!");
   }
 
   const result = { users };
@@ -320,9 +358,17 @@ app.get("/api/db", (req, res) => {
 });
 
 app.post("/api/db", (req, res) => {
+  if (!checkIpRate(req, "db_write", 90, 60000)) {
+    return res.status(429).json({ error: "Rate limit exceeded" });
+  }
   const data = req.body;
   if (!data || !Array.isArray(data.users)) {
-    return res.status(400).json({ error: "Некорректный формат данных" });
+    return res.status(400).json({ error: "Invalid data format" });
+  }
+
+  const prevCount = db.prepare("SELECT COUNT(*) as c FROM users").get().c;
+  if (prevCount >= 2 && data.users.length === 0) {
+    return res.status(403).json({ error: "Blocked: empty users wipe rejected" });
   }
 
   let actorId = null;
@@ -331,6 +377,12 @@ app.post("/api/db", (req, res) => {
       actorId = jwt.verify(req.cookies.access_token, ACCESS_SECRET).userId;
     }
   } catch (e) {}
+
+  if (isProd && !actorId) {
+    return res.status(401).json({ error: "Auth required to save DB" });
+  }
+
+  const OWNER_ROLE = "\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446";
 
   if (actorId) {
     if (Array.isArray(data.hrRequests)) {
@@ -348,7 +400,7 @@ app.post("/api/db", (req, res) => {
           String(newR.userId) === String(actorId)
         ) {
           return res.status(403).json({
-            error: "Нельзя одобрить или отклонить собственную заявку на повышение",
+            error: "Cannot approve or reject your own promotion request",
           });
         }
       }
@@ -368,7 +420,7 @@ app.post("/api/db", (req, res) => {
           String(newR.userId) === String(actorId)
         ) {
           return res.status(403).json({
-            error: "Нельзя одобрить или отклонить собственную заявку на повышение",
+            error: "Cannot approve or reject your own promotion request",
           });
         }
       }
@@ -381,12 +433,25 @@ app.post("/api/db", (req, res) => {
     if (
       oldActorRow &&
       newActor &&
-      oldActorRow.role !== "Владелец" &&
+      oldActorRow.role !== OWNER_ROLE &&
       oldActorRow.role !== newActor.role
     ) {
       return res.status(403).json({
-        error: "Нельзя изменить собственную роль",
+        error: "Cannot change your own role",
       });
+    }
+
+    if (oldActorRow && oldActorRow.role !== OWNER_ROLE) {
+      const prevOwners = db
+        .prepare("SELECT id FROM users WHERE role = ?")
+        .all(OWNER_ROLE)
+        .map((r) => String(r.id));
+      const unauthorizedOwner = data.users.find(
+        (u) => u && u.role === OWNER_ROLE && !prevOwners.includes(String(u.id))
+      );
+      if (unauthorizedOwner) {
+        return res.status(403).json({ error: "Only Owner can assign Owner role" });
+      }
     }
   }
 
@@ -402,11 +467,11 @@ app.post("/api/db", (req, res) => {
     for (const u of data.users) {
       insUser.run(
         String(u.id || Date.now() + Math.random()),
-        u.name || "Без имени",
+        u.name || "User",
         u.login || "",
-        u.role || "Пользователь",
-        Number(u.coins) || 0,
-        Number(u.balance) || 0,
+        u.role || "\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c",
+        Math.max(0, Number(u.coins) || 0),
+        Math.max(0, Number(u.balance) || 0),
         Number(u.trust) || 0,
         JSON.stringify(u),
       );
@@ -415,6 +480,7 @@ app.post("/api/db", (req, res) => {
       if (k !== "users") insSec.run(k, JSON.stringify(v));
     }
     db.exec("COMMIT");
+    runAutoSqliteBackup(db, dbPath);
     res.json({ ok: true });
   } catch (err) {
     db.exec("ROLLBACK");
@@ -423,25 +489,31 @@ app.post("/api/db", (req, res) => {
 });
 
 app.get("/api/download-db", (req, res) => {
+  if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
+    return res.status(429).send("Too many attempts. Wait 15 minutes.");
+  }
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
-    return res.status(403).send("Доступ запрещён: неверный пароль");
+    return res.status(403).send("Access denied: wrong password");
   }
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
   res.download(dbPath, "database.sqlite");
 });
 
 app.post("/api/reset-db", (req, res) => {
+  if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
+    return res.status(429).json({ error: "Too many attempts. Wait 15 minutes." });
+  }
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
-    return res.status(403).json({ error: "Доступ запрещён: неверный пароль" });
+    return res.status(403).json({ error: "Access denied: wrong password" });
   }
   db.exec("DELETE FROM users; DELETE FROM db_sections;");
-  res.json({ ok: true, message: "✅ База данных полностью очищена" });
+  res.json({ ok: true, message: "Database cleared" });
 });
 
 app.get("/api/db-admin", (req, res) => {
-  res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Управление БД</title>
+  res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SQLite Admin</title>
   <style>
     body{font-family:system-ui,sans-serif;background:#0d131a;color:#e6edf3;max-width:520px;margin:40px auto;padding:20px}
     .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;margin-bottom:16px}
@@ -454,16 +526,16 @@ app.get("/api/db-admin", (req, res) => {
     #msg{margin-top:12px;font-weight:600;white-space:pre-wrap}
   </style></head><body>
   <div class="card">
-    <h2>🗄 Управление SQLite БД</h2>
-    <label>Ключ доступа (DB_DOWNLOAD_KEY):</label>
-    <input type="password" id="key" placeholder="Введите пароль...">
-    <button class="btn-dl" onclick="dl()">⬇ Скачать database.sqlite</button>
+    <h2>SQLite Database Admin</h2>
+    <label>Access Key (DB_DOWNLOAD_KEY):</label>
+    <input type="password" id="key" placeholder="Password...">
+    <button class="btn-dl" onclick="dl()">Download database.sqlite</button>
     <hr style="border-color:#30363d;margin:16px 0">
-    <label>Загрузить файл database.sqlite:</label>
+    <label>Upload database.sqlite:</label>
     <input type="file" id="file" accept=".sqlite,.db">
-    <button class="btn-up" onclick="up()">⬆ Загрузить и перезапустить</button>
+    <button class="btn-up" onclick="up()">Upload & Restart</button>
     <hr style="border-color:#30363d;margin:16px 0">
-    <button class="btn-rst" onclick="rst()">🗑 Очистить базу данных</button>
+    <button class="btn-rst" onclick="rst()">Reset Database</button>
     <div id="msg"></div>
   </div>
   <script>
@@ -474,15 +546,15 @@ app.get("/api/db-admin", (req, res) => {
     }
     async function up() {
       const k = document.getElementById('key').value;
-      const f = document.getElementById('file').files[0];
-      if (!f) return msg.textContent = '❌ Выберите файл .sqlite';
-      msg.textContent = '⏳ Загрузка...';
+      const f = document.getElementById('file').files.item(0);
+      if (!f) return msg.textContent = 'Select .sqlite file';
+      msg.textContent = 'Uploading...';
       const res = await fetch('/api/upload-db?key=' + encodeURIComponent(k), { method: 'POST', body: f });
       const data = await res.json();
       msg.textContent = data.message || data.error;
     }
     async function rst() {
-      if (!confirm('Точно удалить все данные из базы?')) return;
+      if (!confirm('Delete all data from database?')) return;
       const k = document.getElementById('key').value;
       const res = await fetch('/api/reset-db?key=' + encodeURIComponent(k), { method: 'POST' });
       const data = await res.json();
@@ -491,7 +563,13 @@ app.get("/api/db-admin", (req, res) => {
   </script></body></html>`);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Сервер запущен на порту ${PORT} (CORS: ${FRONTEND_URL})`);
+app.get("/", (req, res) => {
+  const indexPath = path.join(__dirname, "public", "index.html");
+  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+  res.json({ ok: true, service: "SpaceWorld Staff API" });
+});
+
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("SpaceWorld Staff server listening on port " + PORT);
 });
