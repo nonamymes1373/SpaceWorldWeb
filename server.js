@@ -18,7 +18,7 @@ app.use(cookieParser());
 
 const _rateBuckets = new Map();
 function checkIpRate(req, bucket, maxReq, windowMs) {
-  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",").trim();
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
   const key = ip + ":" + bucket;
   const now = Date.now();
   let rec = _rateBuckets.get(key);
