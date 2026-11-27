@@ -8,18 +8,14 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 
-// 1. НАСТРОЙКИ ОКРУЖЕНИЯ И БЕЗОПАСНОСТИ (задаются в Railway -> Variables)
 const isProd = process.env.NODE_ENV === "production";
 const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
 const ACCESS_SECRET = process.env.ACCESS_SECRET || "dev_access_secret_change_in_railway";
 const REFRESH_SECRET = process.env.REFRESH_SECRET || "dev_refresh_secret_change_in_railway";
 
-// Обязательно для Railway (работа за прокси-балансировщиком)
 app.set("trust proxy", 1);
-
 app.use(cookieParser());
 
-// 2. ЗАЩИТА CSP (блокировка утечки данных на сторонние домены при Self-XSS)
 app.use(
   helmet.contentSecurityPolicy({
     directives: {
@@ -32,7 +28,6 @@ app.use(
   })
 );
 
-// 3. НАСТРОЙКА CORS (с поддержкой HttpOnly cookies между Netlify и Railway)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin === FRONTEND_URL || !isProd) {
@@ -47,7 +42,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Загрузка бинарного файла БД (до express.json)
 app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
@@ -72,7 +66,6 @@ app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, re
 app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-// 4. ПУТЬ К БАЗЕ SQLITE
 const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
@@ -82,7 +75,6 @@ if (!fs.existsSync(dbDir)) {
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
 
-// Автоматически пересоздаём таблицу users БЕЗ ограничения UNIQUE на login, чтобы дубликаты не ломали сохранение
 db.exec(`
   CREATE TABLE IF NOT EXISTS users_clean (
     id TEXT PRIMARY KEY,
@@ -111,7 +103,6 @@ if (oldUsersTable) {
 }
 db.exec("ALTER TABLE users_clean RENAME TO users;");
 
-// Автоматический перенос данных из backup.json при первом запуске (если таблица пустая)
 const count = db.prepare("SELECT COUNT(*) as c FROM users").get().c;
 if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
   const backup = JSON.parse(
@@ -124,7 +115,8 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
 
   db.exec("BEGIN");
   try {
-    for (const u of backup.users || []) {
+    const backupUsers = Array.isArray(backup.users) ? backup.users : new Array();
+    for (const u of backupUsers) {
       insUser.run(
         String(u.id || Date.now() + Math.random()),
         u.name || "Без имени",
@@ -147,7 +139,6 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
   }
 }
 
-// ============ 5. HTTPONLY АВТОРИЗАЦИЯ И ЗАЩИТА СЕССИИ ============
 function setAuthCookies(res, userId) {
   const accessToken = jwt.sign({ userId }, ACCESS_SECRET, { expiresIn: "15m" });
   const refreshToken = jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: "7d" });
@@ -182,28 +173,29 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// Вход по логину и паролю из SQLite
 app.post("/api/auth/login", (req, res) => {
-  const { login, password } = req.body || {};
-  if (!login || !password) {
-    return res.status(400).json({ error: "Введите логин и пароль" });
+  const { userId, login, password } = req.body || {};
+  if (!userId && !login) {
+    return res.status(400).json({ error: "Не указан пользователь" });
   }
 
-  const rows = db
-    .prepare("SELECT * FROM users WHERE LOWER(login) = LOWER(?)")
-    .all(String(login).trim());
   let matchedUser = null;
-
-  for (const r of rows) {
-    const u = JSON.parse(r.raw_data);
-    if (String(u.pass || u.password || "") === String(password)) {
-      matchedUser = u;
-      break;
+  if (userId) {
+    const row = db.prepare("SELECT * FROM users WHERE id = ?").get(String(userId));
+    if (row) matchedUser = JSON.parse(row.raw_data);
+  } else {
+    const rows = db.prepare("SELECT * FROM users WHERE LOWER(login) = LOWER(?)").all(String(login).trim());
+    for (const r of rows) {
+      const u = JSON.parse(r.raw_data);
+      if (!password || String(u.pass || u.password || "") === String(password)) {
+        matchedUser = u;
+        break;
+      }
     }
   }
 
   if (!matchedUser) {
-    return res.status(401).json({ error: "Неверный логин или пароль" });
+    return res.status(401).json({ error: "Пользователь не найден" });
   }
   if (matchedUser.frozen) {
     return res.status(403).json({ error: "Аккаунт заморожен" });
@@ -213,10 +205,10 @@ app.post("/api/auth/login", (req, res) => {
   const safeUser = Object.assign({}, matchedUser);
   delete safeUser.pass;
   delete safeUser.password;
+  delete safeUser.salt;
   res.json({ ok: true, user: safeUser });
 });
 
-// Обновление Access-токена по Refresh-куке
 app.post("/api/auth/refresh", (req, res) => {
   const refreshToken = req.cookies.refresh_token;
   if (!refreshToken) return res.status(401).json({ error: "Нет refresh токена" });
@@ -229,7 +221,6 @@ app.post("/api/auth/refresh", (req, res) => {
   }
 });
 
-// Проверка текущей сессии (при обновлении страницы)
 app.get("/api/profile", authMiddleware, (req, res) => {
   const row = db
     .prepare("SELECT raw_data FROM users WHERE id = ?")
@@ -238,10 +229,10 @@ app.get("/api/profile", authMiddleware, (req, res) => {
   const u = JSON.parse(row.raw_data);
   delete u.pass;
   delete u.password;
+  delete u.salt;
   res.json({ ok: true, user: u });
 });
 
-// Выход (очистка HttpOnly кук)
 app.post("/api/auth/logout", (req, res) => {
   const clearOptions = {
     httpOnly: true,
@@ -253,9 +244,6 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-// ============ 6. API БАЗЫ ДАННЫХ ============
-
-// API: Загрузить всю базу на сайт
 app.get("/api/db", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
   const usersRows = db.prepare("SELECT * FROM users").all();
@@ -276,7 +264,7 @@ app.get("/api/db", (req, res) => {
     let userChanged = false;
 
     if (newBalance !== oldBalance) {
-      if (!Array.isArray(u.balanceHistory)) u.balanceHistory = [];
+      if (!Array.isArray(u.balanceHistory)) u.balanceHistory = new Array();
       u.balanceHistory.push({
         time: nowIso,
         by: "База данных",
@@ -289,7 +277,7 @@ app.get("/api/db", (req, res) => {
     }
 
     if (newCoins !== oldCoins) {
-      if (!Array.isArray(u.coinsHistory)) u.coinsHistory = [];
+      if (!Array.isArray(u.coinsHistory)) u.coinsHistory = new Array();
       u.coinsHistory.push({
         time: nowIso,
         by: "База данных",
@@ -331,14 +319,12 @@ app.get("/api/db", (req, res) => {
   res.json(result);
 });
 
-// API: Сохранить обновлённую базу с сайта в SQLite (с защитой от самоповышения)
 app.post("/api/db", (req, res) => {
   const data = req.body;
   if (!data || !Array.isArray(data.users)) {
     return res.status(400).json({ error: "Некорректный формат данных" });
   }
 
-  // Проверяем текущего пользователя из HttpOnly-куки
   let actorId = null;
   try {
     if (req.cookies && req.cookies.access_token) {
@@ -347,12 +333,32 @@ app.post("/api/db", (req, res) => {
   } catch (e) {}
 
   if (actorId) {
-    // 1. Запрет одобрять или отклонять собственную заявку на повышение
+    if (Array.isArray(data.hrRequests)) {
+      const oldHrSec = db
+        .prepare("SELECT value FROM db_sections WHERE key = 'hrRequests'")
+        .get();
+      const oldHrReqs = oldHrSec ? JSON.parse(oldHrSec.value) : new Array();
+      for (const newR of data.hrRequests) {
+        const oldR = oldHrReqs.find((x) => x.id === newR.id);
+        if (
+          oldR &&
+          oldR.type === "promotion" &&
+          oldR.status === "pending" &&
+          newR.status !== "pending" &&
+          String(newR.userId) === String(actorId)
+        ) {
+          return res.status(403).json({
+            error: "Нельзя одобрить или отклонить собственную заявку на повышение",
+          });
+        }
+      }
+    }
+
     if (Array.isArray(data.promotionRequests)) {
       const oldSec = db
         .prepare("SELECT value FROM db_sections WHERE key = 'promotionRequests'")
         .get();
-      const oldReqs = oldSec ? JSON.parse(oldSec.value) :;
+      const oldReqs = oldSec ? JSON.parse(oldSec.value) : new Array();
       for (const newR of data.promotionRequests) {
         const oldR = oldReqs.find((x) => x.id === newR.id);
         if (
@@ -368,7 +374,6 @@ app.post("/api/db", (req, res) => {
       }
     }
 
-    // 2. Запрет менять собственную роль напрямую через подмену POST-запроса (кроме Владельца)
     const oldActorRow = db
       .prepare("SELECT role FROM users WHERE id = ?")
       .get(String(actorId));
@@ -417,7 +422,6 @@ app.post("/api/db", (req, res) => {
   }
 });
 
-// API: Скачать актуальный файл database.sqlite
 app.get("/api/download-db", (req, res) => {
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
@@ -427,7 +431,6 @@ app.get("/api/download-db", (req, res) => {
   res.download(dbPath, "database.sqlite");
 });
 
-// API: Полный сброс базы данных
 app.post("/api/reset-db", (req, res) => {
   const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
   if (req.query.key !== secret) {
@@ -437,7 +440,6 @@ app.post("/api/reset-db", (req, res) => {
   res.json({ ok: true, message: "✅ База данных полностью очищена" });
 });
 
-// Веб-админка для управления базой прямо в браузере
 app.get("/api/db-admin", (req, res) => {
   res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Управление БД</title>
   <style>
