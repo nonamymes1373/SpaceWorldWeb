@@ -176,7 +176,7 @@ if (count === 0 && fs.existsSync(path.join(__dirname, "backup.json"))) {
 }
 
 function setAuthCookies(res, userId) {
-  const accessToken = jwt.sign({ userId }, ACCESS_SECRET, { expiresIn: "15m" });
+  const accessToken = jwt.sign({ userId }, ACCESS_SECRET, { expiresIn: "7d" });
   const refreshToken = jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: "7d" });
 
   const cookieOptions = {
@@ -187,7 +187,7 @@ function setAuthCookies(res, userId) {
 
   res.cookie("access_token", accessToken, {
     ...cookieOptions,
-    maxAge: 15 * 60 * 1000,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
     path: "/",
   });
 
