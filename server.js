@@ -378,9 +378,7 @@ app.post("/api/db", (req, res) => {
     }
   } catch (e) {}
 
-  if (isProd && !actorId) {
-    return res.status(401).json({ error: "Auth required to save DB" });
-  }
+  
 
   const OWNER_ROLE = "\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446";
 
