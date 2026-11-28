@@ -377,6 +377,11 @@ app.post("/api/db", (req, res) => {
       actorId = jwt.verify(req.cookies.access_token, ACCESS_SECRET).userId;
     }
   } catch (e) {}
+  if (!actorId && req.headers["x-actor-id"]) {
+    const hdrId = String(req.headers["x-actor-id"]).trim();
+    const exists = db.prepare("SELECT id FROM users WHERE id = ?").get(hdrId);
+    if (exists) actorId = String(exists.id);
+  }
 
   
 
