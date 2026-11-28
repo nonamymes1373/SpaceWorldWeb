@@ -9,12 +9,54 @@ const jwt = require("jsonwebtoken");
 const app = express();
 
 const isProd = process.env.NODE_ENV === "production";
-const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/[\r\n\s]+/g, "").replace(/\/+$/, "");
+const FRONTEND_URL = (process.env.FRONTEND_URL || "https://netlify.app")
+  .replace(/[\r\n\s]+/g, "")
+  .replace(/\/+$/, "");
 const ACCESS_SECRET = process.env.ACCESS_SECRET || "dev_access_secret_change_in_railway";
 const REFRESH_SECRET = process.env.REFRESH_SECRET || "dev_refresh_secret_change_in_railway";
 
 app.set("trust proxy", 1);
 app.use(cookieParser());
+
+const ALLOWED_ORIGINS = [
+  FRONTEND_URL,
+  "https://netlify.app",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:8000"
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && (ALLOWED_ORIGINS.includes(origin) || origin.endsWith(".netlify.app") || !isProd)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  } else {
+    res.header("Access-Control-Allow-Origin", "https://netlify.app");
+  }
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: ["'self'", ...ALLOWED_ORIGINS],
+        imgSrc: ["'self'", "data:", "https:"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+      },
+    },
+  })
+);
 
 const _rateBuckets = new Map();
 function checkIpRate(req, bucket, maxReq, windowMs) {
@@ -49,32 +91,6 @@ function runAutoSqliteBackup(dbInstance, sqlitePath) {
   }
 }
 
-app.use(
-  helmet.contentSecurityPolicy({
-    directives: {
-      defaultSrc: ["'self'"],
-      connectSrc: ["'self'", FRONTEND_URL],
-      imgSrc: ["'self'", "data:", "https:"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-    },
-  })
-);
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin === FRONTEND_URL || !isProd) {
-    res.header("Access-Control-Allow-Origin", origin || FRONTEND_URL);
-  }
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
 app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
   if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
     return res.status(429).json({ error: "Too many attempts. Wait 15 minutes." });
@@ -99,8 +115,9 @@ app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, re
   }
 });
 
-app.use(express.json({ limit: "25mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+
 
 const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
 const dbDir = path.dirname(dbPath);
