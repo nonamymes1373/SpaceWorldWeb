@@ -9,54 +9,12 @@ const jwt = require("jsonwebtoken");
 const app = express();
 
 const isProd = process.env.NODE_ENV === "production";
-const FRONTEND_URL = (process.env.FRONTEND_URL || "https://netlify.app")
-  .replace(/[\r\n\s]+/g, "")
-  .replace(/\/+$/, "");
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/[\r\n\s]+/g, "").replace(/\/+$/, "");
 const ACCESS_SECRET = process.env.ACCESS_SECRET || "dev_access_secret_change_in_railway";
 const REFRESH_SECRET = process.env.REFRESH_SECRET || "dev_refresh_secret_change_in_railway";
 
 app.set("trust proxy", 1);
 app.use(cookieParser());
-
-const ALLOWED_ORIGINS = [
-  FRONTEND_URL,
-  "https://netlify.app",
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://localhost:8000"
-];
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && (ALLOWED_ORIGINS.includes(origin) || origin.endsWith(".netlify.app") || !isProd)) {
-    res.header("Access-Control-Allow-Origin", origin);
-  } else {
-    res.header("Access-Control-Allow-Origin", "https://netlify.app");
-  }
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-  next();
-});
-
-app.use(
-  helmet({
-    crossOriginResourcePolicy: false,
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        connectSrc: ["'self'", ...ALLOWED_ORIGINS],
-        imgSrc: ["'self'", "data:", "https:"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-      },
-    },
-  })
-);
 
 const _rateBuckets = new Map();
 function checkIpRate(req, bucket, maxReq, windowMs) {
@@ -91,12 +49,38 @@ function runAutoSqliteBackup(dbInstance, sqlitePath) {
   }
 }
 
+app.use(
+  helmet.contentSecurityPolicy({
+    directives: {
+      defaultSrc: ["'self'"],
+      connectSrc: ["'self'", FRONTEND_URL],
+      imgSrc: ["'self'", "data:", "https:"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+    },
+  })
+);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin === FRONTEND_URL || !isProd) {
+    res.header("Access-Control-Allow-Origin", origin || FRONTEND_URL);
+  }
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, res) => {
   if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
     return res.status(429).json({ error: "Too many attempts. Wait 15 minutes." });
   }
-  const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
-  if (req.query.key !== secret) {
+  const secret = process.env.DB_DOWNLOAD_KEY;
+  if (!secret || req.query.key !== secret) {
     return res.status(403).json({ error: "Access denied: wrong password" });
   }
   if (!req.body || req.body.length < 100 || req.body.subarray(0, 15).toString() !== "SQLite format 3") {
@@ -115,9 +99,8 @@ app.post("/api/upload-db", express.raw({ type: "*/*", limit: "50mb" }), (req, re
   }
 });
 
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
-
 
 const dbPath = process.env.DB_PATH || path.join(__dirname, "database.sqlite");
 const dbDir = path.dirname(dbPath);
@@ -399,6 +382,64 @@ app.post("/api/db", (req, res) => {
 
   const OWNER_ROLE = "\u0412\u043b\u0430\u0434\u0435\u043b\u0435\u0446";
 
+  if (prevCount > 0 && !actorId) {
+    return res.status(401).json({ error: "Unauthorized: valid session required" });
+  }
+
+  if (actorId) {
+    const actorDbRow = db.prepare("SELECT role, raw_data FROM users WHERE id = ?").get(String(actorId));
+    if (!actorDbRow) {
+      return res.status(401).json({ error: "Unauthorized: user not found" });
+    }
+    const actorObj = JSON.parse(actorDbRow.raw_data || "{}");
+    const adminRoles = new Set([
+      OWNER_ROLE,
+      "\u0422\u0435\u0445. \u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440",
+      "\u0421\u0442. \u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440",
+      "\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440"
+    ]);
+    const rpSec = db.prepare("SELECT value FROM db_sections WHERE key = 'rolePerms'").get();
+    const rolePerms = rpSec ? JSON.parse(rpSec.value) : {};
+    const rPerms = (rolePerms && rolePerms[actorDbRow.role]) || {};
+    const cPerms = actorObj.customPerms || {};
+    const canManageShop = adminRoles.has(actorDbRow.role) || !!rPerms.manage_shop || !!cPerms.manage_shop;
+    const canManageInv = canManageShop || !!rPerms.manage_inventory || !!cPerms.manage_inventory;
+
+    if (!canManageShop && Array.isArray(data.shopItems)) {
+      const oldShopSec = db.prepare("SELECT value FROM db_sections WHERE key = 'shopItems'").get();
+      if (oldShopSec && JSON.stringify(data.shopItems) !== oldShopSec.value) {
+        return res.status(403).json({ error: "Forbidden: no permission to edit shopItems" });
+      }
+    }
+
+    if (!canManageInv) {
+      const oldUsersRows = db.prepare("SELECT id, raw_data FROM users").all();
+      const oldInvById = new Map();
+      for (const r of oldUsersRows) {
+        const parsed = JSON.parse(r.raw_data || "{}");
+        oldInvById.set(String(r.id), Array.isArray(parsed.inventory) ? parsed.inventory : new Array());
+      }
+      for (const nu of data.users) {
+        const uidStr = String(nu.id);
+        const prevInv = oldInvById.get(uidStr) || new Array();
+        const nextInv = Array.isArray(nu.inventory) ? nu.inventory : new Array();
+        if (uidStr !== String(actorId)) {
+          if (JSON.stringify(prevInv) !== JSON.stringify(nextInv)) {
+            return res.status(403).json({ error: "Forbidden: cannot modify another user's inventory" });
+          }
+        } else {
+          const prevIds = new Set(prevInv.map((x) => String(x && x.id)));
+          const forgedAdminItem = nextInv.find(
+            (x) => x && x.source === "admin" && !prevIds.has(String(x.id))
+          );
+          if (forgedAdminItem) {
+            return res.status(403).json({ error: "Forbidden: forged admin item rejected" });
+          }
+        }
+      }
+    }
+  }
+
   if (actorId) {
     if (Array.isArray(data.hrRequests)) {
       const oldHrSec = db
@@ -507,8 +548,8 @@ app.get("/api/download-db", (req, res) => {
   if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
     return res.status(429).send("Too many attempts. Wait 15 minutes.");
   }
-  const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
-  if (req.query.key !== secret) {
+  const secret = process.env.DB_DOWNLOAD_KEY;
+  if (!secret || req.query.key !== secret) {
     return res.status(403).send("Access denied: wrong password");
   }
   db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -519,8 +560,8 @@ app.post("/api/reset-db", (req, res) => {
   if (!checkIpRate(req, "db_key", 5, 15 * 60000)) {
     return res.status(429).json({ error: "Too many attempts. Wait 15 minutes." });
   }
-  const secret = process.env.DB_DOWNLOAD_KEY || "moy_parol_123";
-  if (req.query.key !== secret) {
+  const secret = process.env.DB_DOWNLOAD_KEY;
+  if (!secret || req.query.key !== secret) {
     return res.status(403).json({ error: "Access denied: wrong password" });
   }
   db.exec("DELETE FROM users; DELETE FROM db_sections;");
@@ -587,5 +628,4 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log("SpaceWorld Staff server listening on port " + PORT);
-})
-
+});
